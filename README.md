@@ -8,6 +8,15 @@ Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackD
 
 
 ## Installation
+
+### NPM
+```sh
+# NPM
+npm install @foretag/tanstack-db-surrealdb
+# Bun
+bun install @foretag/tanstack-db-surrealdb
+```
+
 ### JSR
 ```sh
 # NPM
@@ -38,7 +47,7 @@ type Product = {
 	price: number;
 };
 
-const products = createCollection(
+export const products = createCollection(
 	surrealCollection<Product>({
 		id: 'products',
 		useLoro: true, // Optional if you need CRDTs
@@ -104,6 +113,11 @@ DEFINE FIELD OVERWRITE updated_at ON <table>
 > While using SurrealDB as a Web Database, please remember to allow `SELECT` & `UPDATE` permissions for the `sync_deleted` and `updated_at` fields for the respective access.
 
 ## FAQ
+
+<details>
+	<summary><strong>When do I need CRDTs?</strong></summary>
+	<p>In most cases Tanstack DB is sufficient to handle CRUD operations. However, if you need to implement a distributed system that are offline first, CRDTs are the way to go. Think: Google Docs, Figma Pages, Notion Blocks etc.</p>
+</details>
 
 <details>
 	<summary><strong>How do I achieve type safety?</strong></summary>
