@@ -88,7 +88,7 @@ module.exports = {
 
 ## CRDTs
 
-If you need to use CRDTs for your application consider adding the following fields to the specific tables and set `useLoro: true`. Please note these fields are opinionated, therefore fixed and required:
+If you need to use CRDTs for your application consider adding the following fields to the specific tables and set `useLoro: true` for the respective table. Please note these fields are opinionated, therefore fixed and required:
 
 ```sql
 DEFINE FIELD OVERWRITE sync_deleted ON <table>
@@ -113,4 +113,9 @@ DEFINE FIELD OVERWRITE updated_at ON <table>
 <details>
 	<summary><strong>Can I use GraphQL alongside this Library?</strong></summary>
 	<p>GraphQL workflow is in the works as SurrealDB's own implementation of the GraphQL protocol matures, we'll be able to provide a seamless integration. Since this library only targets TanstackDB, you can also use GraphQL for direct querying through Tanstack Query.</p>
+</details>
+
+<details>
+	<summary><strong>Can I reduce the package sizes?</strong></summary>
+	<p>They can be reduced, but these steps are very unique based on use-case. Loro ships a WASM binary thats 3-4 MB in size, it's one of the tradeoffs of using this approach. The maintainers up-stream are working on reducing the size of the WASM binary.</p>
 </details>
