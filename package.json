@@ -1,0 +1,17 @@
+{
+	"name": "tanstack-db-surrealdb",
+	"version": "0.1.0",
+	"keywords": [
+		"surrealdb",
+		"tanstackdb"
+	],
+	"dependencies": {
+		"@tanstack/db": "^0.4.3",
+		"loro-crdt": "^1.8.1",
+		"surrealdb": "2.0.0-alpha.8"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.2.5",
+		"surrealdb.js": "^1.0.0"
+	}
+}
