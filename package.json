@@ -33,7 +33,7 @@
 		"email": "chiru@foretag.co"
 	},
 	"scripts": {
-		"build": "bunup --exports --format esm,cjs"
+		"build": "tsup src/index.ts --dts --format esm,cjs"
 	},
 	"dependencies": {
 		"@tanstack/db": "^0.4.3",
@@ -42,6 +42,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.5",
-		"bunup": "^0.14.11"
+		"bunup": "^0.14.11",
+		"tsup": "^8.5.0"
 	}
 }

@@ -1,6 +1,6 @@
 # TanstackDB SurrealDB Collections
 
-> Note: Please note this Software is Pre-release and not yet recommended for production use.
+> Note: Please note this Software is Pre-release pending testing and not yet recommended for production use.
 
 Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackDB and Loro (CRDTs).
 
