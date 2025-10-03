@@ -1,4 +1,4 @@
-import type { Surreal } from 'surrealdb';
+import type { Expr, Surreal } from 'surrealdb';
 
 export type Id = string;
 
@@ -10,18 +10,20 @@ export type SurrealTable = {
 	[field: string]: unknown;
 };
 
+export type SyncedRow = SurrealObject<{
+	sync_deleted: boolean;
+	updated_at: Date;
+}>;
+
 export type TableOptions = {
 	db: Surreal;
 	name: string;
-	where?: {
-		query: string;
-		bindings?: Record<string, unknown>;
-	};
+	where?: Expr;
 };
 
-export type SurrealCollectionConfig<T extends {}> = {
+export type SurrealCollectionConfig<T extends SyncedRow> = {
 	id?: string;
-	getKey: (row: T) => string;
+	getKey: (row: T) => Id;
 	table: TableOptions;
 	useLoro?: boolean;
 	onError?: (e: unknown) => void;

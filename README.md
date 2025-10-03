@@ -1,9 +1,9 @@
 # TanstackDB SurrealDB Collections
 
-Integrate TanstackDB with SurrealDB and benefit from:
+Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackDB and Loro (CRDTs).
 
 - Local / Offline first applications with SurrealDB with CRDTs
-- Works with Web, Desktop or Native (WASM based)
+- Works with Web, PWA / Desktop or Native (WASM based)
 - Support for React, Svelte, Vue and any Framework!
 
 
@@ -26,6 +26,7 @@ await db.connect('ws://localhost:8000/rpc');
 await db.use({ ns: 'ns', db: 'db' });
 
 // collections/products.ts
+import { expr, eq } from 'surrealdb';
 import { db } from '../db';
 import { createCollection } from '@tanstack/db';
 import { surrealCollectionOptions } from '@foretag/tanstack-db-surrealdb';
@@ -45,12 +46,7 @@ const products = createCollection(
 		table: {
 			db,
 			name: 'products',
-			where: {
-				query: 'store = $storeId',
-				bindings: {
-					storeId: '123'
-				}
-			}
+			where: expr(eq('store', '123'))
 		},
 	});
 )
@@ -92,7 +88,7 @@ module.exports = {
 
 ## CRDTs
 
-If you need to use CRDTs for your application consider adding the following fields to the specific tables and set `useLoro: true`:
+If you need to use CRDTs for your application consider adding the following fields to the specific tables and set `useLoro: true`. Please note these fields are opinionated, therefore fixed and required:
 
 ```sql
 DEFINE FIELD OVERWRITE sync_deleted ON <table>
@@ -104,6 +100,8 @@ DEFINE FIELD OVERWRITE updated_at ON <table>
 	TYPE datetime
 	VALUE time::now();
 ```
+
+> While using SurrealDB as a Web Database, please remember to allow `SELECT` & `UPDATE` permissions for the `sync_deleted` and `updated_at` fields for the respective access.
 
 ## FAQ
 

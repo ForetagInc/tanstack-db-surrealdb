@@ -1,36 +1,52 @@
 import {
+	and,
+	type ExprCtx,
+	eq,
 	type LiveMessage,
 	type LiveSubscription,
 	type RecordId,
 	Table,
 	Uuid,
 } from 'surrealdb';
-import type { Id, TableOptions } from './types';
+import type { SyncedRow, TableOptions } from './types';
 
-export function manageTable<T extends { id: Id }>({
+export function manageTable<T extends SyncedRow>({
 	db,
 	name,
 	where,
 }: TableOptions) {
-	const list = async (): Promise<T[]> => {
+	const listAll = async (): Promise<T[]> => {
 		if (!where) {
-			const response = (await db.select<T>(new Table(name))) ?? [];
-			return Array.isArray(response) ? response : [response];
+			const res = (await db.select<T>(new Table(name))) ?? [];
+			return Array.isArray(res) ? res : [res];
 		}
 
-		const [response] = await db
-			.query(where.query, where.bindings)
-			.collect<[T[]]>();
+		return await db.select<T>(new Table(name)).where(where);
+	};
 
-		return response;
+	const listActive = async (): Promise<T[]> => {
+		return await db
+			.select<T>(new Table(name))
+			.where(and(where, eq('sync_deleted', false)));
 	};
 
 	const upsert = async (id: RecordId, data: T | Partial<T>) => {
-		await db.upsert(id).merge(data);
+		await db.upsert(id).merge({
+			...data,
+			sync_deleted: false,
+			updated_at: Date.now(),
+		});
 	};
 
 	const remove = async (id: RecordId) => {
 		await db.delete(id);
+	};
+
+	const softDelete = async (id: RecordId) => {
+		await db.upsert(id).merge({
+			sync_deleted: true,
+			updated_at: Date.now(),
+		});
 	};
 
 	const subscribe = (
@@ -51,20 +67,23 @@ export function manageTable<T extends { id: Id }>({
 		const start = async () => {
 			if (!where) {
 				live = await db.live(new Table(name));
+				live.subscribe(on);
 			} else {
+				const ctx: ExprCtx = {
+					def() {
+						return '';
+					},
+				};
+
 				const [id] = await db
 					.query(
-						`LIVE SELECT * FROM ${name} WHERE ${where.query}`,
-						where.bindings,
+						`LIVE SELECT * FROM ${name} WHERE ${where.toSQL(ctx)}`,
 					)
 					.collect<[string]>();
-
 				live = await db.liveOf(new Uuid(id));
+				live.subscribe(on);
 			}
-
-			live.subscribe(on);
 		};
-
 		void start();
 
 		return () => {
@@ -75,9 +94,11 @@ export function manageTable<T extends { id: Id }>({
 	};
 
 	return {
-		list,
+		listAll,
+		listActive,
 		upsert,
 		remove,
+		softDelete,
 		subscribe,
 	};
 }
