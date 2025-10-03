@@ -32,6 +32,10 @@
 		"name": "Chiru Boggavarapu",
 		"email": "chiru@foretag.co"
 	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/ForetagInc/tanstack-db-surrealdb"
+	},
 	"scripts": {
 		"build": "tsup src/index.ts --dts --format esm,cjs"
 	},
