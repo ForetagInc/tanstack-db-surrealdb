@@ -1,11 +1,13 @@
 # TanstackDB SurrealDB Collections
 
+> Note: Please note this Software is Pre-release and not yet recommended for production use.
+
 Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackDB and Loro (CRDTs).
 
-- Local / Offline first applications with SurrealDB with CRDTs
-- Works with Web, PWA / Desktop or Native (WASM based)
+- Local / Offline first applications with TanstackDB and Loro
+- High performance with Low resource consumption
+- Works with Web, Desktop or Native (WASM based)
 - Support for React, Svelte, Vue and any Framework!
-
 
 ## Installation
 
@@ -116,7 +118,7 @@ DEFINE FIELD OVERWRITE updated_at ON <table>
 
 <details>
 	<summary><strong>When do I need CRDTs?</strong></summary>
-	<p>In most cases Tanstack DB is sufficient to handle CRUD operations. However, if you need to implement a distributed system that are offline first, CRDTs are the way to go. Think: Google Docs, Figma Pages, Notion Blocks etc.</p>
+	<p>In most cases Tanstack DB is sufficient to handle CRUD operations. However, if you need to implement a distributed system that is offline first, CRDTs are the way to go. Think: Google Docs, Figma Pages, Notion Blocks etc. We recommend you check out <a href='https://www.loro.dev/' target='_blank'>Loro</a> for a deeper understanding.</p>
 </details>
 
 <details>
