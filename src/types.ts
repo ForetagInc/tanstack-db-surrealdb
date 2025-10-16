@@ -10,21 +10,24 @@ export type SurrealTable = {
 	[field: string]: unknown;
 };
 
+export type SurrealField<I> = keyof I | (string & {});
+
 export type SyncedRow = SurrealObject<{
 	sync_deleted: boolean;
 	updated_at: Date;
 }>;
 
-export type TableOptions = {
+export type TableOptions<T> = {
 	db: Surreal;
 	name: string;
 	where?: Expr;
+	fields?: SurrealField<T>;
 };
 
-export type SurrealCollectionConfig<T extends SyncedRow> = {
+export type SurrealCollectionConfig<T extends { id: Id } | SyncedRow> = {
 	id?: string;
-	getKey: (row: T) => Id;
-	table: TableOptions;
+	// getKey: (row: T) => Id;
+	table: TableOptions<T>;
 	useLoro?: boolean;
 	onError?: (e: unknown) => void;
 };

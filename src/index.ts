@@ -1,9 +1,13 @@
 import type {
 	CollectionConfig,
+	DeleteMutationFn,
 	DeleteMutationFnParams,
+	InsertMutationFn,
 	InsertMutationFnParams,
+	StandardSchema,
 	SyncConfig,
 	UpdateMutationFnParams,
+	UtilsRecord,
 } from '@tanstack/db';
 import { type Container, LoroDoc } from 'loro-crdt';
 import { RecordId } from 'surrealdb';
@@ -16,13 +20,19 @@ export function surrealCollectionOptions<
 	S extends Record<string, Container> = { [k: string]: never },
 >({
 	id,
-	getKey,
 	useLoro = false,
 	onError,
 	...config
-}: SurrealCollectionConfig<T>): CollectionConfig<T> {
+}: SurrealCollectionConfig<T>): CollectionConfig<
+	T,
+	Id,
+	StandardSchema<T>,
+	UtilsRecord
+> {
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
 	if (useLoro) loro = { doc: new LoroDoc(), key: id };
+
+	const getKey = (row: T) => row.id;
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
@@ -212,7 +222,7 @@ export function surrealCollectionOptions<
 
 	const table = manageTable<T & { id: string }>(config.table);
 
-	const sync: SyncConfig<T>['sync'] = ({
+	const sync: SyncConfig<T, Id>['sync'] = ({
 		begin,
 		write,
 		commit,
@@ -287,7 +297,12 @@ export function surrealCollectionOptions<
 
 	const now = () => Date.now();
 
-	const onInsert = async (p: InsertMutationFnParams<T>) => {
+	const onInsert: InsertMutationFn<
+		T,
+		Id,
+		UtilsRecord,
+		StandardSchema<unknown>
+	> = async (p: InsertMutationFnParams<T>) => {
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'insert') continue;
 			const row = {

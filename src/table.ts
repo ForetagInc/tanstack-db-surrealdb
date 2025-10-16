@@ -13,21 +13,20 @@ import type { SyncedRow, TableOptions } from './types';
 export function manageTable<T extends SyncedRow>({
 	db,
 	name,
-	where,
-}: TableOptions) {
+	...args
+}: TableOptions<T>) {
 	const listAll = async (): Promise<T[]> => {
-		if (!where) {
-			const res = (await db.select<T>(new Table(name))) ?? [];
-			return Array.isArray(res) ? res : [res];
-		}
-
-		return await db.select<T>(new Table(name)).where(where);
+		return await db
+			.select<T>(new Table(name))
+			.where(args.where)
+			.fields(args.fields);
 	};
 
 	const listActive = async (): Promise<T[]> => {
 		return await db
 			.select<T>(new Table(name))
-			.where(and(where, eq('sync_deleted', false)));
+			.where(and(args.where, eq('sync_deleted', false)))
+			.fields(args.fields);
 	};
 
 	const upsert = async (id: RecordId, data: T | Partial<T>) => {
@@ -65,7 +64,7 @@ export function manageTable<T extends SyncedRow>({
 		};
 
 		const start = async () => {
-			if (!where) {
+			if (!args.where) {
 				live = await db.live(new Table(name));
 				live.subscribe(on);
 			} else {
@@ -77,7 +76,7 @@ export function manageTable<T extends SyncedRow>({
 
 				const [id] = await db
 					.query(
-						`LIVE SELECT * FROM ${name} WHERE ${where.toSQL(ctx)}`,
+						`LIVE SELECT * FROM ${name} WHERE ${args.where.toSQL(ctx)}`,
 					)
 					.collect<[string]>();
 				live = await db.liveOf(new Uuid(id));
