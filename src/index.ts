@@ -6,6 +6,7 @@ import type {
 	InsertMutationFnParams,
 	StandardSchema,
 	SyncConfig,
+	UpdateMutationFn,
 	UpdateMutationFnParams,
 	UtilsRecord,
 } from '@tanstack/db';
@@ -16,7 +17,7 @@ import { manageTable } from './table';
 import type { Id, SurrealCollectionConfig, SyncedRow } from './types';
 
 export function surrealCollectionOptions<
-	T extends SyncedRow,
+	T extends SyncedRow<object>,
 	S extends Record<string, Container> = { [k: string]: never },
 >({
 	id,
@@ -301,8 +302,9 @@ export function surrealCollectionOptions<
 		T,
 		Id,
 		UtilsRecord,
-		StandardSchema<unknown>
-	> = async (p: InsertMutationFnParams<T>) => {
+		StandardSchema<T>
+	> = async (p: InsertMutationFnParams<T>): Promise<StandardSchema<T>> => {
+		const resultRows: T[] = [];
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'insert') continue;
 			const row = {
@@ -313,10 +315,19 @@ export function surrealCollectionOptions<
 			if (useLoro) loroPut(row);
 			const rid = new RecordId(config.table.name, row.id);
 			await table.upsert(rid, row);
+			resultRows.push(row);
 		}
+
+		return resultRows as unknown as StandardSchema<T>;
 	};
 
-	const onUpdate = async (p: UpdateMutationFnParams<T>) => {
+	const onUpdate: UpdateMutationFn<
+		T,
+		Id,
+		UtilsRecord,
+		StandardSchema<T>
+	> = async (p: UpdateMutationFnParams<T>): Promise<StandardSchema<T>> => {
+		const resultRows: T[] = [];
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'update') continue;
 			const id = m.key as Id;
@@ -324,16 +335,27 @@ export function surrealCollectionOptions<
 			if (useLoro) loroPut(merged);
 			const rid = new RecordId(config.table.name, id);
 			await table.upsert(rid, merged);
+			resultRows.push(merged);
 		}
+
+		return resultRows as unknown as StandardSchema<T>;
 	};
 
-	const onDelete = async (p: DeleteMutationFnParams<T>) => {
+	const onDelete: DeleteMutationFn<
+		T,
+		Id,
+		UtilsRecord,
+		StandardSchema<T>
+	> = async (p: DeleteMutationFnParams<T>): Promise<StandardSchema<T>> => {
+		const resultRows: T[] = [];
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'delete') continue;
 			const id = m.key as Id;
 			if (useLoro) loroRemove(id);
 			await table.softDelete(new RecordId(config.table.name, id));
 		}
+
+		return resultRows as unknown as StandardSchema<T>;
 	};
 
 	return {

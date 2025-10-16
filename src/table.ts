@@ -10,7 +10,7 @@ import {
 } from 'surrealdb';
 import type { SyncedRow, TableOptions } from './types';
 
-export function manageTable<T extends SyncedRow>({
+export function manageTable<T extends SyncedRow<object>>({
 	db,
 	name,
 	...args

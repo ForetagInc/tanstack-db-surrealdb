@@ -12,10 +12,12 @@ export type SurrealTable = {
 
 export type SurrealField<I> = keyof I | (string & {});
 
-export type SyncedRow = SurrealObject<{
-	sync_deleted: boolean;
-	updated_at: Date;
-}>;
+export type SyncedRow<T> = SurrealObject<
+	T & {
+		sync_deleted?: boolean;
+		updated_at?: Date;
+	}
+>;
 
 export type TableOptions<T> = {
 	db: Surreal;
@@ -24,7 +26,7 @@ export type TableOptions<T> = {
 	fields?: SurrealField<T>;
 };
 
-export type SurrealCollectionConfig<T extends { id: Id } | SyncedRow> = {
+export type SurrealCollectionConfig<T extends SurrealObject<object>> = {
 	id?: string;
 	// getKey: (row: T) => Id;
 	table: TableOptions<T>;
