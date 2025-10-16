@@ -46,7 +46,6 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.6",
-		"@tanstack/svelte-db": "^0.1.32",
 		"bunup": "^0.14.20",
 		"tsup": "^8.5.0"
 	}
