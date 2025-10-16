@@ -3,6 +3,7 @@ import { surrealCollectionOptions } from '../dist';
 import { Surreal } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
+import { useLiveQuery } from '@tanstack/svelte-db';
 
 const db = new Surreal();
 
@@ -13,11 +14,14 @@ type Product = {
 }
 
 const productsCollection = createCollection<Product>(surrealCollectionOptions({
+	db,
 	table: {
-		db,
 		name: 'products',
+		fields: ['name' , 'price'], // Optional, or Default to SELECT *
 	}
 }));
+
+const products = useLiveQuery((query) => query.from({ products: productsCollection }));
 
 productsCollection.insert({
 	id: 'product:1',

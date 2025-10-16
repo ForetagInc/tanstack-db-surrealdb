@@ -51,13 +51,12 @@ type Product = {
 
 export const products = createCollection(
 	surrealCollection<Product>({
-		id: 'products',
+		db,
 		useLoro: true, // Optional if you need CRDTs
-		getKey: (collection) => collection.id,
 		table: {
-			db,
 			name: 'products',
-			where: expr(eq('store', '123'))
+			where: expr(eq('store', '123')),
+			fields: ['name', 'price'] // Optional or defaults to *
 		},
 	});
 )

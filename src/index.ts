@@ -17,19 +17,15 @@ import { manageTable } from './table';
 import type { Id, SurrealCollectionConfig, SyncedRow } from './types';
 
 export function surrealCollectionOptions<
-	T extends SyncedRow<object>,
+	T extends SyncedRow,
 	S extends Record<string, Container> = { [k: string]: never },
 >({
 	id,
 	useLoro = false,
 	onError,
+	db,
 	...config
-}: SurrealCollectionConfig<T>): CollectionConfig<
-	T,
-	Id,
-	StandardSchema<T>,
-	UtilsRecord
-> {
+}: SurrealCollectionConfig<T>): CollectionConfig<T, Id, never, UtilsRecord> {
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
 	if (useLoro) loro = { doc: new LoroDoc(), key: id };
 
@@ -221,7 +217,7 @@ export function surrealCollectionOptions<
 		prevById = currById;
 	};
 
-	const table = manageTable<T & { id: string }>(config.table);
+	const table = manageTable<T & { id: string }>(db, config.table);
 
 	const sync: SyncConfig<T, Id>['sync'] = ({
 		begin,

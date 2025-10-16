@@ -5,28 +5,30 @@ import {
 	type LiveMessage,
 	type LiveSubscription,
 	type RecordId,
+	type Surreal,
 	Table,
 	Uuid,
 } from 'surrealdb';
 import type { SyncedRow, TableOptions } from './types';
 
-export function manageTable<T extends SyncedRow<object>>({
-	db,
-	name,
-	...args
-}: TableOptions<T>) {
+export function manageTable<T extends SyncedRow>(
+	db: Surreal,
+	{ name, ...args }: TableOptions<T>,
+) {
+	const fields = args.fields?.join(', ') ?? '*';
+
 	const listAll = async (): Promise<T[]> => {
 		return await db
 			.select<T>(new Table(name))
 			.where(args.where)
-			.fields(args.fields);
+			.fields(fields);
 	};
 
 	const listActive = async (): Promise<T[]> => {
 		return await db
 			.select<T>(new Table(name))
 			.where(and(args.where, eq('sync_deleted', false)))
-			.fields(args.fields);
+			.fields(fields);
 	};
 
 	const upsert = async (id: RecordId, data: T | Partial<T>) => {
