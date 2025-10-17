@@ -25,7 +25,12 @@ export function surrealCollectionOptions<
 	onError,
 	db,
 	...config
-}: SurrealCollectionConfig<T>): CollectionConfig<T, Id, never, UtilsRecord> {
+}: SurrealCollectionConfig<T>): CollectionConfig<
+	T,
+	string | number,
+	never,
+	UtilsRecord
+> {
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
 	if (useLoro) loro = { doc: new LoroDoc(), key: id };
 
@@ -219,7 +224,7 @@ export function surrealCollectionOptions<
 
 	const table = manageTable<T & { id: string }>(db, config.table);
 
-	const sync: SyncConfig<T, Id>['sync'] = ({
+	const sync: SyncConfig<T, string | number>['sync'] = ({
 		begin,
 		write,
 		commit,
@@ -292,7 +297,7 @@ export function surrealCollectionOptions<
 		};
 	};
 
-	const now = () => Date.now();
+	const now = () => new Date();
 
 	const onInsert: InsertMutationFn<
 		T,
