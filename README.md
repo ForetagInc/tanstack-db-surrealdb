@@ -132,5 +132,5 @@ DEFINE FIELD OVERWRITE updated_at ON <table>
 
 <details>
 	<summary><strong>Can I reduce the package sizes?</strong></summary>
-	<p>They can be reduced, but these steps are very unique based on use-case. Loro ships a WASM binary thats 3-4 MB in size, it's one of the tradeoffs of using this approach. The maintainers up-stream are working on reducing the size of the WASM binary.</p>
+	<p>They can be reduced, but these steps are very unique based on use-case. Loro ships a WASM binary thats 1 MB Gzipped in size, it's one of the tradeoffs of using this approach. The maintainers up-stream are working on reducing the size of the WASM binary.</p>
 </details>
