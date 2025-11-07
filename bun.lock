@@ -4,17 +4,17 @@
     "": {
       "name": "tanstack-db-surrealdb",
       "dependencies": {
-        "@tanstack/db": "^0.4.16",
-        "loro-crdt": "^1.8.8",
+        "@tanstack/db": "^0.4.20",
+        "loro-crdt": "^1.8.9",
       },
       "devDependencies": {
-        "@biomejs/biome": "^2.3.2",
-        "@tanstack/svelte-db": "^0.1.38",
-        "surrealdb": "alpha",
+        "@biomejs/biome": "^2.3.4",
+        "@tanstack/svelte-db": "^0.1.42",
+        "surrealdb": "2.0.0-alpha.13",
         "tsup": "^8.5.0",
       },
       "peerDependencies": {
-        "surrealdb": "alpha",
+        "surrealdb": "2.0.0-alpha.13",
       },
     },
   },
