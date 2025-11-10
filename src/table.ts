@@ -1,34 +1,33 @@
 import {
 	and,
-	type ExprCtx,
 	eq,
+	Features,
 	type LiveMessage,
 	type LiveSubscription,
 	type RecordId,
 	type Surreal,
 	Table,
-	Uuid,
 } from 'surrealdb';
-import type { SyncedRow, TableOptions } from './types';
+import type { TableOptions } from './types';
 
-export function manageTable<T extends SyncedRow>(
+export function manageTable<T extends { id: string | RecordId }>(
 	db: Surreal,
 	{ name, ...args }: TableOptions<T>,
 ) {
 	const fields = args.fields?.join(', ') ?? '*';
 
 	const listAll = async (): Promise<T[]> => {
-		return await db
+		return (await db
 			.select<T>(new Table(name))
 			.where(args.where)
-			.fields(fields);
+			.fields(fields)) as T[];
 	};
 
 	const listActive = async (): Promise<T[]> => {
-		return await db
+		return (await db
 			.select<T>(new Table(name))
 			.where(and(args.where, eq('sync_deleted', false)))
-			.fields(fields);
+			.fields(fields)) as T[];
 	};
 
 	const upsert = async (id: RecordId, data: T | Partial<T>) => {
@@ -66,25 +65,14 @@ export function manageTable<T extends SyncedRow>(
 		};
 
 		const start = async () => {
-			if (!args.where) {
-				live = await db.live(new Table(name));
-				live.subscribe(on);
-			} else {
-				const ctx: ExprCtx = {
-					def() {
-						return '';
-					},
-				};
+			const isLiveSupported = db.isFeatureSupported(Features.LiveQueries);
 
-				const [id] = await db
-					.query(
-						`LIVE SELECT * FROM ${name} WHERE ${args.where.toSQL(ctx)}`,
-					)
-					.collect<[string]>();
-				live = await db.liveOf(new Uuid(id));
+			if (isLiveSupported) {
+				live = await db.live(new Table(name)).where(args.where);
 				live.subscribe(on);
 			}
 		};
+
 		void start();
 
 		return () => {

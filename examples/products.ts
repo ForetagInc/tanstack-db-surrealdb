@@ -17,7 +17,7 @@ const productsCollection = createCollection<Product>(surrealCollectionOptions({
 	db,
 	table: {
 		name: 'products',
-		fields: ['name' , 'price'], // Optional, or Default to SELECT *
+		fields: ['name', 'price'], // Optional, or Default to SELECT *
 	}
 }));
 

@@ -14,10 +14,10 @@ import { type Container, LoroDoc } from 'loro-crdt';
 import { RecordId } from 'surrealdb';
 
 import { manageTable } from './table';
-import type { Id, SurrealCollectionConfig, SyncedRow } from './types';
+import type { SurrealCollectionConfig, SyncedTable } from './types';
 
 export function surrealCollectionOptions<
-	T extends SyncedRow,
+	T extends SyncedTable<object>,
 	S extends Record<string, Container> = { [k: string]: never },
 >({
 	id,
@@ -34,7 +34,10 @@ export function surrealCollectionOptions<
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
 	if (useLoro) loro = { doc: new LoroDoc(), key: id };
 
-	const getKey = (row: T) => row.id;
+	const keyOf = (id: RecordId | string): string =>
+		typeof id === 'string' ? id : id.toString();
+
+	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
@@ -47,28 +50,31 @@ export function surrealCollectionOptions<
 
 	const loroPut = (row: T) => {
 		if (!loroMap) return;
-		loroMap.set(String(getKey(row)), row as unknown);
+		loroMap.set(getKey(row), row as unknown);
 		loro?.doc?.commit?.();
 	};
 
-	const loroRemove = (id: Id) => {
+	const loroRemove = (id: string) => {
 		if (!loroMap) return;
-		loroMap.delete(String(id));
+		loroMap.delete(id);
 		loro?.doc?.commit?.();
 	};
 
 	type PushOp<T> =
 		| { kind: 'upsert'; row: T }
-		| { kind: 'delete'; id: Id; updated_at: Date };
+		| { kind: 'delete'; id: string; updated_at: Date };
 
 	const flushPushQueue = async () => {
 		const ops = pushQueue.splice(0, pushQueue.length);
 		for (const op of ops) {
 			if (op.kind === 'upsert') {
-				const rid = new RecordId(config.table.name, op.row.id);
+				const rid = new RecordId(
+					config.table.name,
+					op.row.id.toString(),
+				);
 				await table.upsert(rid, op.row);
 			} else {
-				const rid = new RecordId(config.table.name, op.id);
+				const rid = new RecordId(config.table.name, op.id.toString());
 				await table.softDelete(rid);
 			}
 		}
@@ -89,17 +95,15 @@ export function surrealCollectionOptions<
 		}) => void,
 	) => {
 		const localRows = useLoro ? loroToArray() : [];
-		const serverById = new Map<Id, T>(
-			serverRows.map((r) => [getKey(r), r]),
-		);
-		const localById = new Map<Id, T>(localRows.map((r) => [getKey(r), r]));
-		const ids = new Set<Id>([...serverById.keys(), ...localById.keys()]);
+		const serverById = new Map(serverRows.map((r) => [getKey(r), r]));
+		const localById = new Map(localRows.map((r) => [getKey(r), r]));
+		const ids = new Set([...serverById.keys(), ...localById.keys()]);
 		// Results to emit + set prevById
 		const current: T[] = [];
 
 		const applyLocal = (row: T | undefined) => {
 			if (!useLoro || !row) return;
-			if (row.sync_deleted) loroRemove(row.id);
+			if (row.sync_deleted) loroRemove(getKey(row));
 			else loroPut(row);
 		};
 
@@ -172,13 +176,11 @@ export function surrealCollectionOptions<
 	};
 
 	// local snapshot for diffing
-	let prevById = new Map<Id, T>();
-
-	const buildMap = (rows: T[]) =>
-		new Map<Id, T>(rows.map((r) => [getKey(r), r]));
+	let prevById = new Map<string, T>();
+	const buildMap = (rows: T[]) => new Map(rows.map((r) => [getKey(r), r]));
 
 	// TODO: naive deep compare; swap with a faster comparator
-	const same = (a: T, b: T) =>
+	const same = (a: SyncedTable<T>, b: SyncedTable<T>) =>
 		a.sync_deleted === b.sync_deleted &&
 		a.updated_at.getTime() === b.updated_at.getTime() &&
 		JSON.stringify({
@@ -222,7 +224,7 @@ export function surrealCollectionOptions<
 		prevById = currById;
 	};
 
-	const table = manageTable<T & { id: string }>(db, config.table);
+	const table = manageTable<T>(db, config.table);
 
 	const sync: SyncConfig<T, string | number>['sync'] = ({
 		begin,
@@ -232,8 +234,12 @@ export function surrealCollectionOptions<
 	}) => {
 		let offLive: (() => void) | null = null;
 
-		const makeTombstone = (id: Id): T =>
-			({ id, updated_at: new Date(), sync_deleted: true }) as T;
+		const makeTombstone = (id: string): T =>
+			({
+				id: new RecordId(config.table.name, id).toString(),
+				updated_at: new Date(),
+				sync_deleted: true,
+			}) as T;
 
 		const start = async () => {
 			try {
@@ -258,20 +264,20 @@ export function surrealCollectionOptions<
 						if (evt.type === 'insert' || evt.type === 'update') {
 							const row = evt.row as T;
 							if (row.sync_deleted) {
-								if (useLoro) loroRemove(row.id);
+								if (useLoro) loroRemove(getKey(row));
 								const prev =
-									prevById.get(row.id) ??
-									makeTombstone(row.id);
+									prevById.get(getKey(row)) ??
+									makeTombstone(getKey(row));
 								write({ type: 'delete', value: prev });
-								prevById.delete(row.id);
+								prevById.delete(getKey(row));
 							} else {
 								if (useLoro) loroPut(row);
-								const had = prevById.has(row.id);
+								const had = prevById.has(getKey(row));
 								write({
 									type: had ? 'update' : 'insert',
 									value: row,
 								});
-								prevById.set(row.id, row);
+								prevById.set(getKey(row), row);
 							}
 						} else if (evt.type === 'delete') {
 							const id = getKey(evt.row);
@@ -301,7 +307,7 @@ export function surrealCollectionOptions<
 
 	const onInsert: InsertMutationFn<
 		T,
-		Id,
+		string,
 		UtilsRecord,
 		StandardSchema<T>
 	> = async (p: InsertMutationFnParams<T>): Promise<StandardSchema<T>> => {
@@ -314,7 +320,7 @@ export function surrealCollectionOptions<
 				deleted: false,
 			} as T;
 			if (useLoro) loroPut(row);
-			const rid = new RecordId(config.table.name, row.id);
+			const rid = new RecordId(config.table.name, getKey(row));
 			await table.upsert(rid, row);
 			resultRows.push(row);
 		}
@@ -324,17 +330,17 @@ export function surrealCollectionOptions<
 
 	const onUpdate: UpdateMutationFn<
 		T,
-		Id,
+		string,
 		UtilsRecord,
 		StandardSchema<T>
 	> = async (p: UpdateMutationFnParams<T>): Promise<StandardSchema<T>> => {
 		const resultRows: T[] = [];
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'update') continue;
-			const id = m.key as Id;
+			const id = m.key as RecordId;
 			const merged = { ...(m.modified as T), id, updated_at: now() } as T;
 			if (useLoro) loroPut(merged);
-			const rid = new RecordId(config.table.name, id);
+			const rid = new RecordId(config.table.name, keyOf(id));
 			await table.upsert(rid, merged);
 			resultRows.push(merged);
 		}
@@ -344,16 +350,16 @@ export function surrealCollectionOptions<
 
 	const onDelete: DeleteMutationFn<
 		T,
-		Id,
+		string,
 		UtilsRecord,
 		StandardSchema<T>
 	> = async (p: DeleteMutationFnParams<T>): Promise<StandardSchema<T>> => {
 		const resultRows: T[] = [];
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'delete') continue;
-			const id = m.key as Id;
-			if (useLoro) loroRemove(id);
-			await table.softDelete(new RecordId(config.table.name, id));
+			const id = m.key as RecordId;
+			if (useLoro) loroRemove(keyOf(id));
+			await table.softDelete(new RecordId(config.table.name, keyOf(id)));
 		}
 
 		return resultRows as unknown as StandardSchema<T>;
