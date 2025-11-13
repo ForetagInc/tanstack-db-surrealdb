@@ -42,15 +42,15 @@
 	"dependencies": {
 		"@tanstack/db": "^0.4.20",
 		"@tanstack/query-db-collection": "^0.3.0",
-		"loro-crdt": "^1.8.9"
+		"loro-crdt": "^1.9.0"
 	},
 	"peerDependencies": {
 		"surrealdb": "2.0.0-alpha.13"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.3.4",
-		"@tanstack/svelte-db": "^0.1.42",
+		"@biomejs/biome": "^2.3.5",
+		"@tanstack/svelte-db": "^0.1.43",
 		"surrealdb": "2.0.0-alpha.13",
-		"tsup": "^8.5.0"
+		"tsup": "^8.5.1"
 	}
 }
