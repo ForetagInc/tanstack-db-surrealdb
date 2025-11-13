@@ -14,20 +14,20 @@ export function manageTable<T extends { id: string | RecordId }>(
 	db: Surreal,
 	{ name, ...args }: TableOptions<T>,
 ) {
-	const fields = args.fields?.join(', ') ?? '*';
+	const fields = args.fields ?? '*';
 
 	const listAll = async (): Promise<T[]> => {
 		return (await db
 			.select<T>(new Table(name))
 			.where(args.where)
-			.fields(fields)) as T[];
+			.fields(...fields)) as T[];
 	};
 
 	const listActive = async (): Promise<T[]> => {
 		return (await db
 			.select<T>(new Table(name))
 			.where(and(args.where, eq('sync_deleted', false)))
-			.fields(fields)) as T[];
+			.fields(...fields)) as T[];
 	};
 
 	const upsert = async (id: RecordId, data: T | Partial<T>) => {
