@@ -30,8 +30,12 @@ export function manageTable<T extends { id: string | RecordId }>(
 			.fields(...fields)) as T[];
 	};
 
-	const upsert = async (id: RecordId, data: T | Partial<T>) => {
-		await db.upsert(id).merge({
+	const create = async (data: T | Partial<T>) => {
+		await db.create(new Table(name)).content(data);
+	};
+
+	const update = async (id: RecordId, data: T | Partial<T>) => {
+		await db.update(id).merge({
 			...data,
 			sync_deleted: false,
 			updated_at: Date.now(),
@@ -85,7 +89,8 @@ export function manageTable<T extends { id: string | RecordId }>(
 	return {
 		listAll,
 		listActive,
-		upsert,
+		create,
+		update,
 		remove,
 		softDelete,
 		subscribe,

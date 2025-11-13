@@ -61,28 +61,31 @@ export function surrealCollectionOptions<
 	};
 
 	type PushOp<T> =
-		| { kind: 'upsert'; row: T }
+		| { kind: 'create'; row: T }
+		| { kind: 'update'; row: T }
 		| { kind: 'delete'; id: string; updated_at: Date };
+
+	const pushQueue: PushOp<T>[] = [];
+
+	const enqueuePush = (op: PushOp<T>) => pushQueue.push(op);
 
 	const flushPushQueue = async () => {
 		const ops = pushQueue.splice(0, pushQueue.length);
 		for (const op of ops) {
-			if (op.kind === 'upsert') {
+			if (op.kind === 'create') await table.create(op.row);
+			if (op.kind === 'update') {
 				const rid = new RecordId(
 					config.table.name,
 					op.row.id.toString(),
 				);
-				await table.upsert(rid, op.row);
-			} else {
+				await table.update(rid, op.row);
+			}
+			if (op.kind === 'delete') {
 				const rid = new RecordId(config.table.name, op.id.toString());
 				await table.softDelete(rid);
 			}
 		}
 	};
-
-	const pushQueue: PushOp<T>[] = [];
-
-	const enqueuePush = (op: PushOp<T>) => pushQueue.push(op);
 
 	const newer = (a?: Date, b?: Date) =>
 		(a?.getTime() ?? -1) > (b?.getTime() ?? -1);
@@ -139,7 +142,7 @@ export function surrealCollectionOptions<
 				} else {
 					// both alive → pick newer
 					if (newer(l.updated_at, s.updated_at)) {
-						enqueuePush({ kind: 'upsert', row: l });
+						enqueuePush({ kind: 'update', row: l });
 						applyLocal(l);
 						current.push(l);
 					} else {
@@ -163,8 +166,8 @@ export function surrealCollectionOptions<
 					applyLocal(l);
 					current.push(l);
 				} else {
-					// local new row: push upsert
-					enqueuePush({ kind: 'upsert', row: l });
+					// local new row: push create
+					enqueuePush({ kind: 'create', row: l });
 					applyLocal(l);
 					current.push(l);
 				}
@@ -317,11 +320,10 @@ export function surrealCollectionOptions<
 			const row = {
 				...m.modified,
 				updated_at: now(),
-				deleted: false,
+				sync_deleted: false,
 			} as T;
 			if (useLoro) loroPut(row);
-			const rid = new RecordId(config.table.name, getKey(row));
-			await table.upsert(rid, row);
+			await table.create(row);
 			resultRows.push(row);
 		}
 
@@ -341,7 +343,7 @@ export function surrealCollectionOptions<
 			const merged = { ...(m.modified as T), id, updated_at: now() } as T;
 			if (useLoro) loroPut(merged);
 			const rid = new RecordId(config.table.name, keyOf(id));
-			await table.upsert(rid, merged);
+			await table.update(rid, merged);
 			resultRows.push(merged);
 		}
 
