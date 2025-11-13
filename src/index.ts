@@ -60,6 +60,10 @@ export function surrealCollectionOptions<
 		loro?.doc?.commit?.();
 	};
 
+	// ------------------------------------------------------------
+	// CRDT push queue (only really used when useLoro === true)
+	// ------------------------------------------------------------
+
 	type PushOp<T> =
 		| { kind: 'create'; row: T }
 		| { kind: 'update'; row: T }
@@ -67,12 +71,18 @@ export function surrealCollectionOptions<
 
 	const pushQueue: PushOp<T>[] = [];
 
-	const enqueuePush = (op: PushOp<T>) => pushQueue.push(op);
+	const enqueuePush = (op: PushOp<T>) => {
+		if (!useLoro) return; // no-op for non-CRDT tables
+		pushQueue.push(op);
+	};
 
 	const flushPushQueue = async () => {
+		if (!useLoro) return;
 		const ops = pushQueue.splice(0, pushQueue.length);
 		for (const op of ops) {
-			if (op.kind === 'create') await table.create(op.row);
+			if (op.kind === 'create') {
+				await table.create(op.row);
+			}
 			if (op.kind === 'update') {
 				const rid = new RecordId(
 					config.table.name,
@@ -90,6 +100,10 @@ export function surrealCollectionOptions<
 	const newer = (a?: Date, b?: Date) =>
 		(a?.getTime() ?? -1) > (b?.getTime() ?? -1);
 
+	// ------------------------------------------------------------
+	// CRDT reconcile (only used when useLoro === true)
+	// ------------------------------------------------------------
+
 	const reconcileBoot = (
 		serverRows: T[],
 		write: (evt: {
@@ -97,15 +111,20 @@ export function surrealCollectionOptions<
 			value: T;
 		}) => void,
 	) => {
-		const localRows = useLoro ? loroToArray() : [];
+		if (!useLoro) {
+			// Should never be called when useLoro is false, but guard anyway
+			diffAndEmit(serverRows, write);
+			return;
+		}
+
+		const localRows = loroToArray();
 		const serverById = new Map(serverRows.map((r) => [getKey(r), r]));
 		const localById = new Map(localRows.map((r) => [getKey(r), r]));
 		const ids = new Set([...serverById.keys(), ...localById.keys()]);
-		// Results to emit + set prevById
 		const current: T[] = [];
 
 		const applyLocal = (row: T | undefined) => {
-			if (!useLoro || !row) return;
+			if (!row) return;
 			if (row.sync_deleted) loroRemove(getKey(row));
 			else loroPut(row);
 		};
@@ -115,22 +134,27 @@ export function surrealCollectionOptions<
 			const l = localById.get(id);
 
 			if (s && l) {
-				if (s.sync_deleted && l.sync_deleted) {
+				const sDeleted = s.sync_deleted ?? false;
+				const lDeleted = l.sync_deleted ?? false;
+				const sUpdated = s.updated_at as Date | undefined;
+				const lUpdated = l.updated_at as Date | undefined;
+
+				if (sDeleted && lDeleted) {
 					// both deleted → keep tombstone, ensure local reflects deleted
-					applyLocal(s); // or l; both deleted
+					applyLocal(s);
 					current.push(s);
-				} else if (s.sync_deleted && !l.sync_deleted) {
+				} else if (sDeleted && !lDeleted) {
 					// server deleted, local not → server wins
 					applyLocal(s);
-					current.push(s); // tombstone present for diff delete
-				} else if (!s.sync_deleted && l.sync_deleted) {
+					current.push(s);
+				} else if (!sDeleted && lDeleted) {
 					// local deleted, server not → compare updatedAt
-					if (newer(l.updated_at, s.updated_at)) {
+					if (newer(lUpdated, sUpdated)) {
 						// local wins → push tombstone
 						enqueuePush({
 							kind: 'delete',
 							id,
-							updated_at: l.updated_at,
+							updated_at: lUpdated ?? new Date(),
 						});
 						applyLocal(l);
 						current.push(l);
@@ -141,7 +165,7 @@ export function surrealCollectionOptions<
 					}
 				} else {
 					// both alive → pick newer
-					if (newer(l.updated_at, s.updated_at)) {
+					if (newer(lUpdated, sUpdated)) {
 						enqueuePush({ kind: 'update', row: l });
 						applyLocal(l);
 						current.push(l);
@@ -156,12 +180,15 @@ export function surrealCollectionOptions<
 				current.push(s);
 			} else if (!s && l) {
 				// local only
-				if (l.sync_deleted) {
+				const lDeleted = l.sync_deleted ?? false;
+				const lUpdated = l.updated_at as Date | undefined;
+
+				if (lDeleted) {
 					// local tombstone: push delete to server
 					enqueuePush({
 						kind: 'delete',
 						id,
-						updated_at: l.updated_at,
+						updated_at: lUpdated ?? new Date(),
 					});
 					applyLocal(l);
 					current.push(l);
@@ -174,28 +201,43 @@ export function surrealCollectionOptions<
 			}
 		}
 
-		// Emit minimal changes vs prevById and advance snapshot
 		diffAndEmit(current, write);
 	};
 
-	// local snapshot for diffing
+	// ------------------------------------------------------------
+	// diffing snapshot
+	// ------------------------------------------------------------
+
 	let prevById = new Map<string, T>();
 	const buildMap = (rows: T[]) => new Map(rows.map((r) => [getKey(r), r]));
 
-	// TODO: naive deep compare; swap with a faster comparator
-	const same = (a: SyncedTable<T>, b: SyncedTable<T>) =>
-		a.sync_deleted === b.sync_deleted &&
-		a.updated_at.getTime() === b.updated_at.getTime() &&
-		JSON.stringify({
-			...a,
-			updated_at: undefined,
-			sync_deleted: undefined,
-		}) ===
-			JSON.stringify({
-				...b,
-				updated_at: undefined,
-				sync_deleted: undefined,
-			});
+	// Naive deep compare; CRDT fields only matter when useLoro is true
+	const same = (a: SyncedTable<T>, b: SyncedTable<T>) => {
+		if (useLoro) {
+			const aUpdated = a.updated_at as Date | undefined;
+			const bUpdated = b.updated_at as Date | undefined;
+			const aDeleted = a.sync_deleted ?? false;
+			const bDeleted = b.sync_deleted ?? false;
+
+			return (
+				aDeleted === bDeleted &&
+				(aUpdated?.getTime() ?? 0) === (bUpdated?.getTime() ?? 0) &&
+				JSON.stringify({
+					...a,
+					updated_at: undefined,
+					sync_deleted: undefined,
+				}) ===
+					JSON.stringify({
+						...b,
+						updated_at: undefined,
+						sync_deleted: undefined,
+					})
+			);
+		}
+
+		// Non-CRDT tables: just shallow-ish JSON compare
+		return JSON.stringify(a) === JSON.stringify(b);
+	};
 
 	const diffAndEmit = (
 		currentRows: T[],
@@ -223,11 +265,15 @@ export function surrealCollectionOptions<
 			}
 		}
 
-		// advance snapshot
 		prevById = currById;
 	};
 
-	const table = manageTable<T>(db, config.table);
+	const table = manageTable<T>(db, useLoro, config.table);
+	const now = () => new Date();
+
+	// ------------------------------------------------------------
+	// sync
+	// ------------------------------------------------------------
 
 	const sync: SyncConfig<T, string | number>['sync'] = ({
 		begin,
@@ -240,7 +286,7 @@ export function surrealCollectionOptions<
 		const makeTombstone = (id: string): T =>
 			({
 				id: new RecordId(config.table.name, id).toString(),
-				updated_at: new Date(),
+				updated_at: now(),
 				sync_deleted: true,
 			}) as T;
 
@@ -250,15 +296,17 @@ export function surrealCollectionOptions<
 
 				begin();
 
-				if (useLoro) reconcileBoot(serverRows, write);
-				// If not using Loro, then pure server authoritative + diff
-				else diffAndEmit(serverRows, write);
+				if (useLoro) {
+					reconcileBoot(serverRows, write);
+				} else {
+					// Non-CRDT tables: server is authoritative
+					diffAndEmit(serverRows, write);
+				}
 
 				commit();
 				markReady();
 
-				// Process local-wins pushes AFTER we’ve marked ready
-				// TODO: throttle/batch this.
+				// Only has work when useLoro === true
 				await flushPushQueue();
 
 				offLive = table.subscribe((evt) => {
@@ -266,7 +314,11 @@ export function surrealCollectionOptions<
 					try {
 						if (evt.type === 'insert' || evt.type === 'update') {
 							const row = evt.row as T;
-							if (row.sync_deleted) {
+							const deleted = useLoro
+								? (row.sync_deleted ?? false)
+								: false;
+
+							if (deleted) {
 								if (useLoro) loroRemove(getKey(row));
 								const prev =
 									prevById.get(getKey(row)) ??
@@ -306,7 +358,9 @@ export function surrealCollectionOptions<
 		};
 	};
 
-	const now = () => new Date();
+	// ------------------------------------------------------------
+	// mutations
+	// ------------------------------------------------------------
 
 	const onInsert: InsertMutationFn<
 		T,
@@ -317,11 +371,17 @@ export function surrealCollectionOptions<
 		const resultRows: T[] = [];
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'insert') continue;
-			const row = {
-				...m.modified,
-				updated_at: now(),
-				sync_deleted: false,
-			} as T;
+
+			const base = { ...m.modified } as T;
+
+			const row = useLoro
+				? ({
+						...base,
+						updated_at: now(),
+						sync_deleted: false,
+					} as T)
+				: base;
+
 			if (useLoro) loroPut(row);
 			await table.create(row);
 			resultRows.push(row);
@@ -340,7 +400,16 @@ export function surrealCollectionOptions<
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'update') continue;
 			const id = m.key as RecordId;
-			const merged = { ...(m.modified as T), id, updated_at: now() } as T;
+
+			const base = { ...(m.modified as T), id } as T;
+
+			const merged = useLoro
+				? ({
+						...base,
+						updated_at: now(),
+					} as T)
+				: base;
+
 			if (useLoro) loroPut(merged);
 			const rid = new RecordId(config.table.name, keyOf(id));
 			await table.update(rid, merged);
@@ -360,7 +429,11 @@ export function surrealCollectionOptions<
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'delete') continue;
 			const id = m.key as RecordId;
-			if (useLoro) loroRemove(keyOf(id));
+			if (useLoro) {
+				loroRemove(keyOf(id));
+				// You might also want to persist a tombstone here for CRDT tables
+				// e.g. table.update(..., { sync_deleted: true, updated_at: now() })
+			}
 			await table.softDelete(new RecordId(config.table.name, keyOf(id)));
 		}
 
