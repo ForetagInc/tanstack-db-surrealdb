@@ -86,7 +86,7 @@ export function manageTable<T extends { id: string | RecordId }>(
 
 		const on = ({ action, value }: LiveMessage) => {
 			// Debug: log every live event
-			console.debug('[surreal live]', name, action, value);
+			console.debug('[Surreal Live]', name, action, value);
 
 			if (action === 'KILLED') return;
 			if (action === 'CREATE') cb({ type: 'insert', row: value as T });

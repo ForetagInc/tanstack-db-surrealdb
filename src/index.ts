@@ -11,7 +11,7 @@ import type {
 	UtilsRecord,
 } from '@tanstack/db';
 import { type Container, LoroDoc } from 'loro-crdt';
-import { RecordId } from 'surrealdb';
+import { Features, RecordId } from 'surrealdb';
 
 import { manageTable } from './table';
 import type { SurrealCollectionConfig, SyncedTable } from './types';
@@ -60,10 +60,6 @@ export function surrealCollectionOptions<
 		loro?.doc?.commit?.();
 	};
 
-	// ------------------------------------------------------------
-	// CRDT push queue (only really used when useLoro === true)
-	// ------------------------------------------------------------
-
 	type PushOp<T> =
 		| { kind: 'create'; row: T }
 		| { kind: 'update'; row: T }
@@ -99,10 +95,6 @@ export function surrealCollectionOptions<
 
 	const newer = (a?: Date, b?: Date) =>
 		(a?.getTime() ?? -1) > (b?.getTime() ?? -1);
-
-	// ------------------------------------------------------------
-	// CRDT reconcile (only used when useLoro === true)
-	// ------------------------------------------------------------
 
 	const reconcileBoot = (
 		serverRows: T[],
@@ -204,10 +196,6 @@ export function surrealCollectionOptions<
 		diffAndEmit(current, write);
 	};
 
-	// ------------------------------------------------------------
-	// diffing snapshot
-	// ------------------------------------------------------------
-
 	let prevById = new Map<string, T>();
 	const buildMap = (rows: T[]) => new Map(rows.map((r) => [getKey(r), r]));
 
@@ -271,16 +259,17 @@ export function surrealCollectionOptions<
 	const table = manageTable<T>(db, useLoro, config.table);
 	const now = () => new Date();
 
-	// ------------------------------------------------------------
-	// sync
-	// ------------------------------------------------------------
-
 	const sync: SyncConfig<T, string | number>['sync'] = ({
 		begin,
 		write,
 		commit,
 		markReady,
 	}) => {
+		if (!db.isFeatureSupported(Features.LiveQueries)) {
+			markReady();
+			return () => {};
+		}
+
 		let offLive: (() => void) | null = null;
 
 		const makeTombstone = (id: string): T =>
@@ -296,12 +285,9 @@ export function surrealCollectionOptions<
 
 				begin();
 
-				if (useLoro) {
-					reconcileBoot(serverRows, write);
-				} else {
-					// Non-CRDT tables: server is authoritative
-					diffAndEmit(serverRows, write);
-				}
+				if (useLoro) reconcileBoot(serverRows, write);
+				// Non-CRDT tables: server is authoritative
+				else diffAndEmit(serverRows, write);
 
 				commit();
 				markReady();
@@ -357,10 +343,6 @@ export function surrealCollectionOptions<
 			if (offLive) offLive();
 		};
 	};
-
-	// ------------------------------------------------------------
-	// mutations
-	// ------------------------------------------------------------
 
 	const onInsert: InsertMutationFn<
 		T,
@@ -429,11 +411,11 @@ export function surrealCollectionOptions<
 		for (const m of p.transaction.mutations) {
 			if (m.type !== 'delete') continue;
 			const id = m.key as RecordId;
-			if (useLoro) {
-				loroRemove(keyOf(id));
-				// You might also want to persist a tombstone here for CRDT tables
-				// e.g. table.update(..., { sync_deleted: true, updated_at: now() })
-			}
+
+			// @todo: might also want to persist a tombstone here for CRDT tables
+			// e.g. table.update(..., { sync_deleted: true, updated_at: now() })
+			if (useLoro) loroRemove(keyOf(id));
+
 			await table.softDelete(new RecordId(config.table.name, keyOf(id)));
 		}
 
