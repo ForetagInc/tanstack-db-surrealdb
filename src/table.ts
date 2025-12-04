@@ -18,10 +18,9 @@ export function manageTable<T extends { id: string | RecordId }>(
 	const fields = args.fields ?? '*';
 
 	const listAll = async (): Promise<T[]> => {
-		return (await db
-			.select<T>(new Table(name))
-			.where(args.where)
-			.fields(...fields)) as T[];
+		let q = db.select<T>(new Table(name));
+		if (args.where) q = q.where(args.where);
+		return (await q.fields(...fields)) as T[];
 	};
 
 	const listActive = async (): Promise<T[]> => {
@@ -38,16 +37,28 @@ export function manageTable<T extends { id: string | RecordId }>(
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {
-		if (useLoro) {
+		if (!useLoro) {
+			await db.update(id).merge({
+				...data,
+			});
+
+			return;
+		}
+
+		try {
 			await db.update(id).merge({
 				...data,
 				sync_deleted: false,
 				updated_at: Date.now(),
 			});
-		} else {
-			await db.update(id).merge({
-				...data,
-			});
+		} catch (error) {
+			console.warn(
+				`Please ensure the table ${name} has sync_deleted and updated_at fields defined`,
+			);
+			console.error(
+				'Failed to update record with Loro (CRDTs) with: ',
+				error,
+			);
 		}
 	};
 
@@ -56,16 +67,15 @@ export function manageTable<T extends { id: string | RecordId }>(
 	};
 
 	const softDelete = async (id: RecordId) => {
-		if (useLoro) {
-			// CRDT tombstone
-			await db.update(id).merge({
-				sync_deleted: true,
-				updated_at: Date.now(),
-			});
-		} else {
-			// Non-CRDT: just hard delete
+		if (!useLoro) {
 			await db.delete(id);
+			return;
 		}
+
+		await db.upsert(id).merge({
+			sync_deleted: true,
+			updated_at: Date.now(),
+		});
 	};
 
 	const subscribe = (
@@ -75,6 +85,9 @@ export function manageTable<T extends { id: string | RecordId }>(
 		let live: undefined | LiveSubscription;
 
 		const on = ({ action, value }: LiveMessage) => {
+			// Debug: log every live event
+			console.debug('[surreal live]', name, action, value);
+
 			if (action === 'KILLED') return;
 			if (action === 'CREATE') cb({ type: 'insert', row: value as T });
 			else if (action === 'UPDATE')
