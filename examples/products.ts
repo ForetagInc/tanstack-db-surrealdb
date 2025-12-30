@@ -1,6 +1,6 @@
 import { surrealCollectionOptions } from '../dist';
 
-import { Surreal } from 'surrealdb';
+import { Surreal, expr, eq, or } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
 import { useLiveQuery } from '@tanstack/svelte-db';
@@ -18,6 +18,28 @@ const productsCollection = createCollection<Product>(surrealCollectionOptions({
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *
+	}
+}));
+
+const productsCollectionFilter = createCollection<Product>(surrealCollectionOptions({
+	db,
+	table: {
+		name: 'products',
+		fields: ['name', 'price'], // Optional, or Default to SELECT *
+		where: eq('price', 100)
+	}
+}));
+
+
+const productsCollectionAdvancedFilter = createCollection<Product>(surrealCollectionOptions({
+	db,
+	table: {
+		name: 'products',
+		fields: ['name', 'price'], // Optional, or Default to SELECT *
+		where: expr(or(
+			eq('price', 100),
+			eq('price', 200)
+		))
 	}
 }));
 

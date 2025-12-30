@@ -1,4 +1,4 @@
-import type { Expr, RecordId, Surreal } from 'surrealdb';
+import type { BoundQuery, ExprLike, RecordId, Surreal } from 'surrealdb';
 
 export type WithId<T> = T & {
 	id: string | RecordId;
@@ -13,7 +13,7 @@ export type SyncedTable<T> = WithId<
 
 export type TableOptions<T> = {
 	name: string;
-	where?: Expr;
+	where?: ExprLike | BoundQuery;
 	fields?: (keyof T)[];
 };
 
