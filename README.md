@@ -17,14 +17,6 @@ npm install @foretag/tanstack-db-surrealdb
 bun install @foretag/tanstack-db-surrealdb
 ```
 
-### JSR
-```sh
-# NPM
-npx jsr add @foretag/tanstack-db-surrealdb
-# Bun
-bunx jsr add @foretag/tanstack-db-surrealdb
-```
-
 ## Usage
 ```ts
 // db.ts
@@ -59,6 +51,8 @@ export const products = createCollection(
 	});
 )
 ```
+
+For syncModes, please see [Example](https://github.com/ForetagInc/tanstack-db-surrealdb/blob/master/examples/syncMode.ts)
 
 ## Vite / Next.JS
 
