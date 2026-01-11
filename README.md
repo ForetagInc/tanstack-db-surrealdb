@@ -52,6 +52,8 @@ export const products = createCollection(
 )
 ```
 
+For syncModes, please see [Example](https://github.com/ForetagInc/tanstack-db-surrealdb/blob/master/examples/syncMode.ts)
+
 ## Vite / Next.JS
 
 ### Vite
