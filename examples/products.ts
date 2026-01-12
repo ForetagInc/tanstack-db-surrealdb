@@ -15,6 +15,7 @@ type Product = {
 
 const productsCollection = createCollection<Product>(surrealCollectionOptions({
 	db,
+	queryKey: ['products'],
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *
@@ -23,6 +24,7 @@ const productsCollection = createCollection<Product>(surrealCollectionOptions({
 
 const productsCollectionFilter = createCollection<Product>(surrealCollectionOptions({
 	db,
+	queryKey: ['products', 'filter'],
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *
@@ -33,6 +35,7 @@ const productsCollectionFilter = createCollection<Product>(surrealCollectionOpti
 
 const productsCollectionAdvancedFilter = createCollection<Product>(surrealCollectionOptions({
 	db,
+	queryKey: ['products', 'advancedFilter'],
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *
