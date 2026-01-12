@@ -129,9 +129,7 @@ export function surrealCollectionOptions<
 			try {
 				const subset =
 					syncMode === 'on-demand'
-						? ((meta?.loadSubsetOptions ?? undefined) as
-								| SurrealSubset
-								| undefined)
+						? (meta['surrealSubset'] as SurrealSubset | undefined)
 						: undefined;
 
 				const rows =
