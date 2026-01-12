@@ -1,8 +1,9 @@
-import { surrealCollectionOptions } from '../dist';
+import { surrealCollectionOptions, type SurrealSubset } from '../dist';
 
-import { Surreal } from 'surrealdb';
+import { eq, Surreal } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
+import { QueryClient } from '@tanstack/query-core'; // can also be '@tanstack/react-query' or '@tanstack/svelte-query'
 import { useLiveQuery } from '@tanstack/svelte-db';
 
 const db = new Surreal();
@@ -10,24 +11,34 @@ const db = new Surreal();
 type Product = {
 	id: string,
 	name: string,
-	price: number
+	price: number,
+	category?: string,
 }
 
-const productsWithSyncModeCollection = createCollection<Product>(surrealCollectionOptions({
+const queryClient = new QueryClient();
+
+// Subsets [Optional]
+const subset: SurrealSubset = {
+	where: eq('category', 'books'),
+	orderBy: 'created_at DESC',
+	limit: 25,
+	offset: 50,
+};
+
+const productsCollection = createCollection<Product>(surrealCollectionOptions({
 	db,
-	syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' | 'progressive' - defaults to 'eager'
+	queryKey: ['products', subset],
+	queryClient, // [Optional]
+	syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' - defaults to 'eager'
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // [Optional] Defaults to SELECT *
-		pageSize: 50, // [Optional] Defaults to 50
-		initialPageSize: 100, // [Optional] Defaults to 100
-		onProgress: ({ table, loaded, lastBatch, done }) => {} // [Optional]
-	}
+	},
 }));
 
-const products = useLiveQuery((query) => query.from({ products: productsWithSyncModeCollection }));
+const products = useLiveQuery((query) => query.from({ products: productsCollection }));
 
-productsWithSyncModeCollection.insert({
+productsCollection.insert({
 	id: 'product:1',
 	name: 'test',
 	price: 100,
