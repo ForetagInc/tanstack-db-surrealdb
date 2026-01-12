@@ -4,8 +4,10 @@ import { Surreal, eq, or } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
 import { useLiveQuery } from '@tanstack/svelte-db';
+import { QueryClient } from '@tanstack/svelte-query';
 
 const db = new Surreal();
+const queryClient = new QueryClient();
 
 type Product = {
 	id: string,
@@ -16,6 +18,7 @@ type Product = {
 const productsCollection = createCollection<Product>(surrealCollectionOptions({
 	db,
 	queryKey: ['products'],
+	queryClient,
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *
@@ -25,6 +28,7 @@ const productsCollection = createCollection<Product>(surrealCollectionOptions({
 const productsCollectionFilter = createCollection<Product>(surrealCollectionOptions({
 	db,
 	queryKey: ['products', 'filter'],
+	queryClient,
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *
@@ -36,6 +40,7 @@ const productsCollectionFilter = createCollection<Product>(surrealCollectionOpti
 const productsCollectionAdvancedFilter = createCollection<Product>(surrealCollectionOptions({
 	db,
 	queryKey: ['products', 'advancedFilter'],
+	queryClient,
 	table: {
 		name: 'products',
 		fields: ['name', 'price'], // Optional, or Default to SELECT *

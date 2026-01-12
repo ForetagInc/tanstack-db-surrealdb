@@ -20,15 +20,18 @@ bun install @foretag/tanstack-db-surrealdb
 ## Usage
 ```ts
 // db.ts
+import { QueryClient } from '@tanstack/svelte-query'; // Can also use '@tanstack/react-query' etc.
 import { Surreal } from 'surrealdb';
 
 export const db = new Surreal();
 await db.connect('ws://localhost:8000/rpc');
 await db.use({ ns: 'ns', db: 'db' });
 
+export const queryClient = new QueryClient();
+
 // collections/products.ts
 import { eq } from 'surrealdb';
-import { db } from '../db';
+import { db, queryClient } from '../db';
 import { createCollection } from '@tanstack/db';
 import { surrealCollectionOptions } from '@foretag/tanstack-db-surrealdb';
 
@@ -42,6 +45,8 @@ type Product = {
 export const products = createCollection(
 	surrealCollection<Product>({
 		db,
+		queryKey: ['products'],
+		queryClient,
 		useLoro: true, // Optional if you need CRDTs
 		table: {
 			name: 'products',

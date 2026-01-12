@@ -11,6 +11,7 @@
         "@biomejs/biome": "^2.3.11",
         "@tanstack/query-db-collection": "^1.0.14",
         "@tanstack/svelte-db": "^0.1.61",
+        "@tanstack/svelte-query": "^6.0.14",
         "surrealdb": "2.0.0-alpha.16",
         "tsup": "^8.5.1",
       },
@@ -166,6 +167,8 @@
     "@tanstack/query-db-collection": ["@tanstack/query-db-collection@1.0.14", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "@tanstack/db": "0.5.18" }, "peerDependencies": { "@tanstack/query-core": "^5.0.0", "typescript": ">=4.7" } }, "sha512-0wkxtYt+Xas07Ka0f4LVL3nJnibIciIVK64pAifvo+DWA+O2pBSNvFqZkaTC8cAJGvFjwjU3jvzFiTfUMompcw=="],
 
     "@tanstack/svelte-db": ["@tanstack/svelte-db@0.1.61", "", { "dependencies": { "@tanstack/db": "0.5.18" }, "peerDependencies": { "svelte": "^5.0.0" } }, "sha512-/bj+BwJwJ49m7PRtRa9kJHOPJ7JjJH0FKRm1RArDQM+W6aZW3sCf0bl2ixhb3cag4TFHRmmGmgrWWDNH1zREog=="],
+
+    "@tanstack/svelte-query": ["@tanstack/svelte-query@6.0.14", "", { "dependencies": { "@tanstack/query-core": "5.90.16" }, "peerDependencies": { "svelte": "^5.25.0" } }, "sha512-gKuHxbyGP2pCQgE/Px9FtlyFmHTt0OV5xTrKrk7PMKGkv3LPWTTwDb7xlMDe1V7U2K5ci+jq1j3HsuTPqIZxjA=="],
 
     "@types/estree": ["@types/estree@1.0.8", "", {}, "sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w=="],
 
