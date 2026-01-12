@@ -3,7 +3,7 @@ import { surrealCollectionOptions, type SurrealSubset } from '../dist';
 import { eq, Surreal } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
-import { QueryClient } from '@tanstack/query-core'; // can also be '@tanstack/react-query' or '@tanstack/svelte-query'
+// import { QueryClient } from '@tanstack/query-core'; // can also be '@tanstack/react-query' or '@tanstack/svelte-query'
 import { useLiveQuery } from '@tanstack/svelte-db';
 
 const db = new Surreal();
@@ -15,7 +15,7 @@ type Product = {
 	category?: string,
 }
 
-const queryClient = new QueryClient();
+// const queryClient = new QueryClient();
 
 // Subsets [Optional]
 const subset: SurrealSubset = {
@@ -28,7 +28,7 @@ const subset: SurrealSubset = {
 const productsCollection = createCollection<Product>(surrealCollectionOptions({
 	db,
 	queryKey: ['products', subset],
-	queryClient, // [Optional]
+	// queryClient, // [Optional]
 	syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' - defaults to 'eager'
 	table: {
 		name: 'products',

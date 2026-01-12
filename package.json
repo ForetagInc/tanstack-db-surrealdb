@@ -37,7 +37,7 @@
 		"url": "https://github.com/ForetagInc/tanstack-db-surrealdb"
 	},
 	"scripts": {
-		"build": "tsup src/index.ts --dts --format esm,cjs"
+		"build": "tsup src/index.ts"
 	},
 	"dependencies": {
 		"loro-crdt": "^1.10.4"
