@@ -36,7 +36,7 @@ export type SurrealCollectionConfig<T extends { id: string | RecordId }> = {
 	syncMode?: SyncMode;
 
 	queryKey: readonly unknown[];
-	queryClient?: QueryClient;
+	queryClient: QueryClient;
 
 	useLoro?: boolean;
 	onError?: (e: unknown) => void;

@@ -24,27 +24,29 @@ type Cleanup = () => void;
 
 export { SurrealSubset } from './types';
 
-function toCleanup(res: unknown): Cleanup {
+type SyncReturn =
+	| void
+	| Cleanup
+	| {
+			cleanup?: Cleanup;
+			unsubscribe?: Cleanup;
+			dispose?: Cleanup;
+			loadSubset?: unknown; // keep unknown; Only pass through
+	  };
+
+function toCleanup(res: SyncReturn): Cleanup {
 	if (!res) return () => {};
+	if (typeof res === 'function') return res;
 
-	if (typeof res === 'function') {
-		return res as Cleanup;
-	}
+	const cleanup = res.cleanup ?? res.unsubscribe ?? res.dispose;
 
-	if (typeof res === 'object' && res !== null) {
-		const r = res as Record<string, unknown>;
+	return typeof cleanup === 'function' ? cleanup : () => {};
+}
 
-		const cleanup = r['cleanup'];
-		if (typeof cleanup === 'function') return cleanup as Cleanup;
-
-		const unsubscribe = r['unsubscribe'];
-		if (typeof unsubscribe === 'function') return unsubscribe as Cleanup;
-
-		const dispose = r['dispose'];
-		if (typeof dispose === 'function') return dispose as Cleanup;
-	}
-
-	return () => {};
+function hasLoadSubset(
+	res: SyncReturn,
+): res is { loadSubset: unknown } & Record<string, unknown> {
+	return typeof res === 'object' && res !== null && 'loadSubset' in res;
 }
 
 export function surrealCollectionOptions<
@@ -72,6 +74,7 @@ export function surrealCollectionOptions<
 
 	const keyOf = (rid: RecordId | string): string =>
 		typeof rid === 'string' ? rid : rid.toString();
+
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
@@ -97,7 +100,6 @@ export function surrealCollectionOptions<
 			Object.values(localJson).map((r) => [getKey(r as T), r as T]),
 		);
 
-		// Overlay local on top of server when same id exists, and respect local tombstones.
 		const out: T[] = [];
 		for (const s of serverRows) {
 			const idStr = getKey(s);
@@ -108,9 +110,7 @@ export function surrealCollectionOptions<
 				continue;
 			}
 
-			const lDeleted = (l.sync_deleted ?? false) === true;
-			if (lDeleted) continue;
-
+			if ((l.sync_deleted ?? false) === true) continue;
 			out.push(l);
 		}
 
@@ -150,6 +150,7 @@ export function surrealCollectionOptions<
 			const resultRows: T[] = [];
 			for (const m of p.transaction.mutations) {
 				if (m.type !== 'insert') continue;
+
 				const baseRow = { ...m.modified } as T;
 
 				const row = useLoro
@@ -183,10 +184,12 @@ export function surrealCollectionOptions<
 					: baseRow;
 
 				if (useLoro) loroPut(row);
+
 				await table.update(
 					new RecordId(config.table.name, keyOf(idKey)),
 					row,
 				);
+
 				resultRows.push(row);
 			}
 
@@ -215,17 +218,24 @@ export function surrealCollectionOptions<
 	const sync = baseSync
 		? {
 				sync: (ctx: Parameters<NonNullable<typeof baseSync>>[0]) => {
-					const offBase = baseSync(ctx);
+					// IMPORTANT: call baseSync exactly once
+					const baseRes = baseSync(ctx) as SyncReturn;
+					const baseCleanup = toCleanup(baseRes);
 
-					if (!db.isFeatureSupported(Features.LiveQueries))
-						return offBase;
+					// If live queries aren't supported, return the base result untouched
+					if (!db.isFeatureSupported(Features.LiveQueries)) {
+						return baseRes as unknown as ReturnType<
+							NonNullable<typeof baseSync>
+						>;
+					}
 
 					const offLive = table.subscribe((evt) => {
-						// Keep Loro in sync with server pushes
 						if (useLoro) {
-							if (evt.type === 'delete')
+							if (evt.type === 'delete') {
 								loroRemove(getKey(evt.row));
-							else loroPut(evt.row);
+							} else {
+								loroPut(evt.row);
+							}
 						}
 
 						void queryClient
@@ -233,12 +243,26 @@ export function surrealCollectionOptions<
 							.catch((e) => onError?.(e));
 					});
 
-					const baseCleanup = toCleanup(baseSync(ctx));
+					// Preserve base return shape, just wrap cleanup
+					if (hasLoadSubset(baseRes)) {
+						// on-demand mode relies on this being present
+						const resObj = baseRes as Record<string, unknown>;
+						return {
+							...resObj,
+							cleanup: () => {
+								offLive();
+								baseCleanup();
+							},
+						} as unknown as ReturnType<
+							NonNullable<typeof baseSync>
+						>;
+					}
 
-					return () => {
+					// eager mode usually returns a cleanup function
+					return (() => {
 						offLive();
 						baseCleanup();
-					};
+					}) as unknown as ReturnType<NonNullable<typeof baseSync>>;
 				},
 			}
 		: undefined;
