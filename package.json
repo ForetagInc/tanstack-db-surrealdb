@@ -1,7 +1,7 @@
 {
 	"name": "@foretag/tanstack-db-surrealdb",
 	"description": "Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackDB and Loro (CRDTs)",
-	"version": "0.3.3",
+	"version": "0.3.4",
 	"files": [
 		"dist"
 	],
@@ -40,17 +40,17 @@
 		"build": "tsup src/index.ts"
 	},
 	"dependencies": {
-		"loro-crdt": "^1.10.4"
+		"loro-crdt": "^1.10.5"
 	},
 	"peerDependencies": {
-		"@tanstack/db": "^0.5.18",
+		"@tanstack/db": "^0.5.23",
 		"surrealdb": "2.0.0-alpha.16"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.3.11",
-		"@tanstack/query-db-collection": "^1.0.14",
-		"@tanstack/svelte-db": "^0.1.61",
-		"@tanstack/svelte-query": "^6.0.14",
+		"@biomejs/biome": "^2.3.12",
+		"@tanstack/query-db-collection": "^1.0.20",
+		"@tanstack/react-db": "latest",
+		"@tanstack/react-query": "latest",
 		"surrealdb": "2.0.0-alpha.16",
 		"tsup": "^8.5.1"
 	}
