@@ -14,6 +14,7 @@ import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { type Container, LoroDoc } from 'loro-crdt';
 import { Features, RecordId } from 'surrealdb';
 
+import { normalizeRecordIdLikeFields, toRecordIdString } from './id';
 import { manageTable } from './table';
 import type {
 	SurrealCollectionConfig,
@@ -23,7 +24,7 @@ import type {
 
 type Cleanup = () => void;
 
-type InsertInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
+type MutationInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
 	id?: T['id'];
 };
 
@@ -31,10 +32,10 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 	CollectionConfig<
 		T,
 		string,
-		StandardSchemaV1<InsertInput<T>, T>,
+		StandardSchemaV1<MutationInput<T>, T>,
 		UtilsRecord
 	> & {
-		schema: StandardSchemaV1<InsertInput<T>, T>;
+		schema: StandardSchemaV1<MutationInput<T>, T>;
 		utils: UtilsRecord;
 	};
 
@@ -67,7 +68,7 @@ function hasLoadSubset(
 
 function createInsertSchema<T extends { id: string | RecordId }>(
 	tableName: string,
-): StandardSchemaV1<InsertInput<T>, T> {
+): StandardSchemaV1<MutationInput<T>, T> {
 	const createId = (): RecordId => {
 		const uuid =
 			typeof globalThis !== 'undefined' &&
@@ -94,12 +95,11 @@ function createInsertSchema<T extends { id: string | RecordId }>(
 					};
 				}
 
-				const data = {
+				const data = normalizeRecordIdLikeFields({
 					...(value as Record<string, unknown>),
-				} as InsertInput<T>;
-				if (!data.id) {
-					data.id = createId() as T['id'];
-				}
+				}) as MutationInput<T>;
+
+				if (!data.id) data.id = createId() as T['id'];
 
 				return { value: data as T };
 			},
@@ -123,10 +123,10 @@ export function surrealCollectionOptions<
 }: SurrealCollectionConfig<T>): CollectionConfig<
 	T,
 	string,
-	StandardSchemaV1<InsertInput<T>, T>,
+	StandardSchemaV1<MutationInput<T>, T>,
 	UtilsRecord
 > & {
-	schema: StandardSchemaV1<InsertInput<T>, T>;
+	schema: StandardSchemaV1<MutationInput<T>, T>;
 	utils: UtilsRecord;
 } {
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
@@ -134,8 +134,7 @@ export function surrealCollectionOptions<
 
 	const table = manageTable<T>(db, useLoro, config.table);
 
-	const keyOf = (rid: RecordId | string): string =>
-		typeof rid === 'string' ? rid : rid.toString();
+	const keyOf = (rid: RecordId | string): string => toRecordIdString(rid);
 
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 
@@ -240,7 +239,10 @@ export function surrealCollectionOptions<
 				if (m.type !== 'update') continue;
 
 				const idKey = m.key as RecordId;
-				const baseRow = { ...(m.modified as T), id: idKey } as T;
+				const normalizedModified = normalizeRecordIdLikeFields({
+					...(m.modified as Record<string, unknown>),
+				}) as Partial<T>;
+				const baseRow = { ...normalizedModified, id: idKey } as T;
 
 				const row = useLoro
 					? ({ ...baseRow, updated_at: now() } as T)

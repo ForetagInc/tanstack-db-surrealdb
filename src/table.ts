@@ -5,11 +5,11 @@ import {
 	Features,
 	type LiveMessage,
 	type LiveSubscription,
-	RecordId,
+	type RecordId,
 	type Surreal,
 	Table,
 } from 'surrealdb';
-
+import { toRecordId } from './id';
 import type {
 	FieldList,
 	SurrealField,
@@ -32,14 +32,6 @@ const joinOrderBy = (
 };
 
 type QueryResult<T> = T[] | null;
-
-const toRecordId = (tableName: string, id: RecordId | string): RecordId => {
-	if (id instanceof RecordId) return id;
-
-	const prefixed = `${tableName}:`;
-	const key = id.startsWith(prefixed) ? id.slice(prefixed.length) : id;
-	return new RecordId(tableName, key);
-};
 
 export function manageTable<T extends { id: string | RecordId }>(
 	db: Surreal,
