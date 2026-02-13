@@ -89,10 +89,9 @@ export function manageTable<T extends { id: string | RecordId }>(
 			return;
 		}
 
-		const rid = toRecordId(name, id);
 		const payload = { ...(data as Record<string, unknown>) };
-		delete payload.id;
-		await db.create(rid).content(payload);
+		payload.id = toRecordId(name, id);
+		await db.insert(new Table(name), payload);
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {
