@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type {
 	CollectionConfig,
 	DeleteMutationFn,
@@ -22,10 +23,25 @@ import type {
 
 type Cleanup = () => void;
 
+type InsertInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
+	id?: T['id'];
+};
+
+type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
+	CollectionConfig<
+		T,
+		string,
+		StandardSchemaV1<InsertInput<T>, T>,
+		UtilsRecord
+	> & {
+		schema: StandardSchemaV1<InsertInput<T>, T>;
+		utils: UtilsRecord;
+	};
+
 export { SurrealSubset } from './types';
 
 type SyncReturn =
-	| void
+	| undefined
 	| Cleanup
 	| {
 			cleanup?: Cleanup;
@@ -49,6 +65,49 @@ function hasLoadSubset(
 	return typeof res === 'object' && res !== null && 'loadSubset' in res;
 }
 
+function createInsertSchema<T extends { id: string | RecordId }>(
+	tableName: string,
+): StandardSchemaV1<InsertInput<T>, T> {
+	const createId = (): RecordId => {
+		const uuid =
+			typeof globalThis !== 'undefined' &&
+			'crypto' in globalThis &&
+			typeof globalThis.crypto?.randomUUID === 'function'
+				? globalThis.crypto.randomUUID()
+				: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+		return new RecordId(tableName, uuid);
+	};
+
+	return {
+		'~standard': {
+			version: 1,
+			vendor: 'tanstack-db-surrealdb',
+			validate: (value: unknown) => {
+				if (
+					!value ||
+					typeof value !== 'object' ||
+					Array.isArray(value)
+				) {
+					return {
+						issues: [{ message: 'Insert data must be an object.' }],
+					};
+				}
+
+				const data = {
+					...(value as Record<string, unknown>),
+				} as InsertInput<T>;
+				if (!data.id) {
+					data.id = createId() as T['id'];
+				}
+
+				return { value: data as T };
+			},
+			types: undefined,
+		},
+	};
+}
+
 export function surrealCollectionOptions<
 	T extends SyncedTable<object>,
 	S extends Record<string, Container> = { [k: string]: never },
@@ -63,10 +122,13 @@ export function surrealCollectionOptions<
 	...config
 }: SurrealCollectionConfig<T>): CollectionConfig<
 	T,
-	string | number,
-	never,
+	string,
+	StandardSchemaV1<InsertInput<T>, T>,
 	UtilsRecord
-> {
+> & {
+	schema: StandardSchemaV1<InsertInput<T>, T>;
+	utils: UtilsRecord;
+} {
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
 	if (useLoro) loro = { doc: new LoroDoc(), key: id };
 
@@ -117,7 +179,8 @@ export function surrealCollectionOptions<
 		return out;
 	};
 
-	const base = queryCollectionOptions<T>({
+	const base = queryCollectionOptions({
+		schema: createInsertSchema<T>(config.table.name),
 		getKey: (row) => getKey(row),
 
 		queryKey,
@@ -129,7 +192,7 @@ export function surrealCollectionOptions<
 			try {
 				const subset =
 					syncMode === 'on-demand'
-						? (meta['surrealSubset'] as SurrealSubset | undefined)
+						? (meta.surrealSubset as SurrealSubset | undefined)
 						: undefined;
 
 				const rows =
@@ -210,7 +273,7 @@ export function surrealCollectionOptions<
 
 			return [] as unknown as StandardSchema<T>;
 		}) as DeleteMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
-	});
+	} as never) as SurrealCollectionOptionsReturn<T>;
 
 	// LIVE updates -> invalidate all subsets under base queryKey
 	const baseSync = base.sync?.sync;
@@ -270,5 +333,5 @@ export function surrealCollectionOptions<
 	return {
 		...base,
 		sync: sync ?? base.sync,
-	};
+	} as SurrealCollectionOptionsReturn<T>;
 }

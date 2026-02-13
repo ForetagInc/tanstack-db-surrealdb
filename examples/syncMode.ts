@@ -26,21 +26,23 @@ const subset: SurrealSubset = {
 	offset: 50,
 };
 
-const productsCollection = createCollection<Product>(surrealCollectionOptions({
-	db,
-	queryKey: ['products', subset],
-	queryClient,
-	syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' - defaults to 'eager'
-	table: {
-		name: 'products',
-		fields: ['name', 'price'], // [Optional] Defaults to SELECT *
-	},
-}));
+const productsCollection = createCollection(
+	surrealCollectionOptions<Product>({
+		db,
+		queryKey: ['products', subset],
+		queryClient,
+		syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' - defaults to 'eager'
+		table: {
+			name: 'products',
+			fields: ['name', 'price'], // [Optional] Defaults to SELECT *
+		},
+	})
+);
 
 const products = useLiveQuery((query) => query.from({ products: productsCollection }));
 
 productsCollection.insert({
-	id: 'product:1',
+	// id field is optional
 	name: 'test',
 	price: 100,
 });

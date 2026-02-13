@@ -43,7 +43,7 @@ type Product = {
 };
 
 export const products = createCollection(
-	surrealCollection<Product>({
+	surrealCollectionOptions<Product>({
 		db,
 		queryKey: ['products'],
 		queryClient,
@@ -53,7 +53,7 @@ export const products = createCollection(
 			where: eq('store', '123'),
 			fields: ['name', 'price'] // Optional or defaults to *
 		},
-	});
+	}),
 )
 ```
 

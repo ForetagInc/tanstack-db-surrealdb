@@ -5,7 +5,7 @@ import {
 	Features,
 	type LiveMessage,
 	type LiveSubscription,
-	type RecordId,
+	RecordId,
 	type Surreal,
 	Table,
 } from 'surrealdb';
@@ -32,6 +32,14 @@ const joinOrderBy = (
 };
 
 type QueryResult<T> = T[] | null;
+
+const toRecordId = (tableName: string, id: RecordId | string): RecordId => {
+	if (id instanceof RecordId) return id;
+
+	const prefixed = `${tableName}:`;
+	const key = id.startsWith(prefixed) ? id.slice(prefixed.length) : id;
+	return new RecordId(tableName, key);
+};
 
 export function manageTable<T extends { id: string | RecordId }>(
 	db: Surreal,
@@ -83,7 +91,16 @@ export function manageTable<T extends { id: string | RecordId }>(
 	};
 
 	const create = async (data: T | Partial<T>) => {
-		await db.create(new Table(name)).content(data);
+		const id = (data as Partial<T> & { id?: string | RecordId }).id;
+		if (!id) {
+			await db.create(new Table(name)).content(data);
+			return;
+		}
+
+		const rid = toRecordId(name, id);
+		const payload = { ...(data as Record<string, unknown>) };
+		delete payload.id;
+		await db.create(rid).content(payload);
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {
