@@ -19,15 +19,30 @@ const isRecordIdString = (value: string): boolean => {
 	return idx > 0 && idx < value.length - 1;
 };
 
+const parseRecordIdString = (value: string): RecordId | undefined => {
+	if (!isRecordIdString(value)) return undefined;
+
+	const idx = value.indexOf(':');
+	const table = value.slice(0, idx).trim();
+	const key = value.slice(idx + 1).trim();
+	if (!table || !key) return undefined;
+
+	return new RecordId(table, key);
+};
+
 export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
 	if (value instanceof RecordId) return value;
 	if (typeof value !== 'string') return value;
 
 	const trimmed = value.trim();
 	const unquoted = stripOuterQuotes(trimmed);
-	if (unquoted === trimmed) return value;
-	if (!isRecordIdString(unquoted)) return value;
-	return unquoted;
+
+	const parsed =
+		parseRecordIdString(unquoted) ?? parseRecordIdString(trimmed);
+	if (parsed) return parsed;
+
+	// Keep original value shape if it isn't record-id-like
+	return value;
 };
 
 export const normalizeRecordIdLikeFields = <T extends Record<string, unknown>>(
