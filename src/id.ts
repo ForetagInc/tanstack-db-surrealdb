@@ -38,7 +38,8 @@ export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
 	const unquoted = stripOuterQuotes(trimmed);
 
 	const parsed =
-		parseRecordIdString(unquoted) ?? parseRecordIdString(trimmed);
+		parseRecordIdString(unquoted) ??
+		(unquoted === trimmed ? undefined : parseRecordIdString(trimmed));
 	if (parsed) return parsed;
 
 	// Keep original value shape if it isn't record-id-like
