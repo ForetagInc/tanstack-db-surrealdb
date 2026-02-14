@@ -39,7 +39,7 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 		utils: UtilsRecord;
 	};
 
-export { SurrealSubset } from './types';
+export type { SurrealSubset } from './types';
 
 type SyncReturn =
 	| undefined
@@ -51,13 +51,36 @@ type SyncReturn =
 			loadSubset?: unknown; // keep unknown; Only pass through
 	  };
 
+const TEMP_ID_PREFIX = '__temp__';
+const NOOP: Cleanup = () => {};
+
+const createTempRecordId = (tableName: string): RecordId => {
+	const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+	return new RecordId(tableName, `${TEMP_ID_PREFIX}${suffix}`);
+};
+
+const isTempId = (id: string | RecordId, tableName: string): boolean => {
+	if (id instanceof RecordId) {
+		const recordKey = (id as unknown as { id?: unknown }).id;
+		return (
+			typeof recordKey === 'string' && recordKey.startsWith(TEMP_ID_PREFIX)
+		);
+	}
+
+	const raw = toRecordIdString(id);
+	const key = raw.startsWith(`${tableName}:`)
+		? raw.slice(tableName.length + 1)
+		: raw;
+	return key.startsWith(TEMP_ID_PREFIX);
+};
+
 function toCleanup(res: SyncReturn): Cleanup {
-	if (!res) return () => {};
+	if (!res) return NOOP;
 	if (typeof res === 'function') return res;
 
 	const cleanup = res.cleanup ?? res.unsubscribe ?? res.dispose;
 
-	return typeof cleanup === 'function' ? cleanup : () => {};
+	return typeof cleanup === 'function' ? cleanup : NOOP;
 }
 
 function hasLoadSubset(
@@ -69,17 +92,6 @@ function hasLoadSubset(
 function createInsertSchema<T extends { id: string | RecordId }>(
 	tableName: string,
 ): StandardSchemaV1<MutationInput<T>, T> {
-	const createId = (): RecordId => {
-		const uuid =
-			typeof globalThis !== 'undefined' &&
-			'crypto' in globalThis &&
-			typeof globalThis.crypto?.randomUUID === 'function'
-				? globalThis.crypto.randomUUID()
-				: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-
-		return new RecordId(tableName, uuid);
-	};
-
 	return {
 		'~standard': {
 			version: 1,
@@ -99,7 +111,7 @@ function createInsertSchema<T extends { id: string | RecordId }>(
 					...(value as Record<string, unknown>),
 				}) as MutationInput<T>;
 
-				if (!data.id) data.id = createId() as T['id'];
+				if (!data.id) data.id = createTempRecordId(tableName) as T['id'];
 
 				return { value: data as T };
 			},
@@ -137,34 +149,36 @@ export function surrealCollectionOptions<
 	const keyOf = (rid: RecordId | string): string => toRecordIdString(rid);
 
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
+	const normalizeMutationId = (rid: RecordId | string): RecordId =>
+		new RecordId(config.table.name, keyOf(rid));
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
-
-	const loroPut = (row: T) => {
-		if (!loroMap) return;
-		loroMap.set(getKey(row), row as unknown);
+	const commitLoro = () => {
 		loro?.doc?.commit?.();
 	};
 
-	const loroRemove = (idStr: string) => {
+	const loroPut = (row: T, commit = true) => {
+		if (!loroMap) return;
+		loroMap.set(getKey(row), row as unknown);
+		if (commit) commitLoro();
+	};
+
+	const loroRemove = (idStr: string, commit = true) => {
 		if (!loroMap) return;
 		loroMap.delete(idStr);
-		loro?.doc?.commit?.();
+		if (commit) commitLoro();
 	};
 
 	const mergeLocalOverServer = (serverRows: T[]): T[] => {
 		if (!useLoro || !loroMap) return serverRows;
 
-		const localJson = loroMap.toJSON?.() ?? {};
-		const localById = new Map<string, T>(
-			Object.values(localJson).map((r) => [getKey(r as T), r as T]),
-		);
+		const localJson = (loroMap.toJSON?.() ?? {}) as Record<string, T>;
 
 		const out: T[] = [];
 		for (const s of serverRows) {
 			const idStr = getKey(s);
-			const l = localById.get(idStr);
+			const l = localJson[idStr];
 
 			if (!l) {
 				out.push(s);
@@ -180,7 +194,7 @@ export function surrealCollectionOptions<
 
 	const base = queryCollectionOptions({
 		schema: createInsertSchema<T>(config.table.name),
-		getKey: (row) => getKey(row),
+		getKey,
 
 		queryKey,
 		queryClient,
@@ -207,9 +221,10 @@ export function surrealCollectionOptions<
 		},
 
 		onInsert: (async (p: InsertMutationFnParams<T>) => {
-			const now = () => new Date();
+			const now = new Date();
 
 			const resultRows: T[] = [];
+			let shouldCommitLoro = false;
 			for (const m of p.transaction.mutations) {
 				if (m.type !== 'insert') continue;
 
@@ -218,23 +233,36 @@ export function surrealCollectionOptions<
 				const row = useLoro
 					? ({
 							...baseRow,
-							updated_at: now(),
+							updated_at: now,
 							sync_deleted: false,
 						} as T)
 					: baseRow;
 
-				if (useLoro) loroPut(row);
-				await table.create(row);
+				if (useLoro) {
+					loroPut(row, false);
+					shouldCommitLoro = true;
+				}
+				if (isTempId(row.id, config.table.name)) {
+					const { id: _id, ...payload } = row as Record<
+						string,
+						unknown
+					>;
+					await table.create(payload as Partial<T>);
+				} else {
+					await table.create(row);
+				}
 				resultRows.push(row);
 			}
+			if (shouldCommitLoro) commitLoro();
 
 			return resultRows as unknown as StandardSchema<T>;
 		}) as InsertMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 
 		onUpdate: (async (p: UpdateMutationFnParams<T>) => {
-			const now = () => new Date();
+			const now = new Date();
 
 			const resultRows: T[] = [];
+			let shouldCommitLoro = false;
 			for (const m of p.transaction.mutations) {
 				if (m.type !== 'update') continue;
 
@@ -245,33 +273,37 @@ export function surrealCollectionOptions<
 				const baseRow = { ...normalizedModified, id: idKey } as T;
 
 				const row = useLoro
-					? ({ ...baseRow, updated_at: now() } as T)
+					? ({ ...baseRow, updated_at: now } as T)
 					: baseRow;
 
-				if (useLoro) loroPut(row);
+				if (useLoro) {
+					loroPut(row, false);
+					shouldCommitLoro = true;
+				}
 
-				await table.update(
-					new RecordId(config.table.name, keyOf(idKey)),
-					row,
-				);
+				await table.update(normalizeMutationId(idKey), row);
 
 				resultRows.push(row);
 			}
+			if (shouldCommitLoro) commitLoro();
 
 			return resultRows as unknown as StandardSchema<T>;
 		}) as UpdateMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 
 		onDelete: (async (p: DeleteMutationFnParams<T>) => {
+			let shouldCommitLoro = false;
 			for (const m of p.transaction.mutations) {
 				if (m.type !== 'delete') continue;
 
 				const idKey = m.key as RecordId;
-				if (useLoro) loroRemove(keyOf(idKey));
+				if (useLoro) {
+					loroRemove(keyOf(idKey), false);
+					shouldCommitLoro = true;
+				}
 
-				await table.softDelete(
-					new RecordId(config.table.name, keyOf(idKey)),
-				);
+				await table.softDelete(normalizeMutationId(idKey));
 			}
+			if (shouldCommitLoro) commitLoro();
 
 			return [] as unknown as StandardSchema<T>;
 		}) as DeleteMutationFn<T, string, UtilsRecord, StandardSchema<T>>,

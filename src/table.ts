@@ -39,18 +39,21 @@ export function manageTable<T extends { id: string | RecordId }>(
 	{ name, ...args }: TableOptions<T>,
 ) {
 	const fields = normalizeFields<T>(args.fields);
+	const selectFields = fields.join(', ');
+	const table = new Table(name);
+	const aliveWhere = useLoro ? eq('sync_deleted', false) : undefined;
+	const baseWhere = aliveWhere
+		? (args.where ? and(args.where, aliveWhere) : aliveWhere)
+		: args.where;
+	const listAllSql = `SELECT ${selectFields} FROM type::table($table)${
+		baseWhere ? ' WHERE $where' : ''
+	};`;
 
-	const baseWhere = (): ExprLike | undefined => {
-		if (!useLoro) return args.where;
-		const alive = eq('sync_deleted', false);
-		return args.where ? and(args.where, alive) : alive;
-	};
+	const getBaseWhere = (): ExprLike | undefined => baseWhere;
 
 	const listAll = async (): Promise<T[]> => {
-		const where = baseWhere();
-		const whereSql = where ? ' WHERE $where' : '';
-		const sql = `SELECT ${fields.join(', ')} FROM type::table($table)${whereSql};`;
-		const [res] = await db.query<[QueryResult<T>]>(sql, {
+		const where = getBaseWhere();
+		const [res] = await db.query<[QueryResult<T>]>(listAllSql, {
 			table: name,
 			where,
 		});
@@ -58,7 +61,7 @@ export function manageTable<T extends { id: string | RecordId }>(
 	};
 
 	const loadSubset = async (subset?: SurrealSubset): Promise<T[]> => {
-		const b = baseWhere();
+		const b = getBaseWhere();
 		const w = subset?.where;
 		const where = b && w ? and(b, w) : (b ?? w);
 
@@ -70,7 +73,7 @@ export function manageTable<T extends { id: string | RecordId }>(
 		const startSql =
 			typeof subset?.offset === 'number' ? ' START $offset' : '';
 
-		const sql = `SELECT ${fields.join(', ')} FROM type::table($table)${whereSql}${orderSql}${limitSql}${startSql};`;
+		const sql = `SELECT ${selectFields} FROM type::table($table)${whereSql}${orderSql}${limitSql}${startSql};`;
 
 		const [res] = await db.query<[QueryResult<T>]>(sql, {
 			table: name,
@@ -85,13 +88,13 @@ export function manageTable<T extends { id: string | RecordId }>(
 	const create = async (data: T | Partial<T>) => {
 		const id = (data as Partial<T> & { id?: string | RecordId }).id;
 		if (!id) {
-			await db.create(new Table(name)).content(data);
+			await db.create(table).content(data);
 			return;
 		}
 
 		const payload = { ...(data as Record<string, unknown>) };
 		payload.id = toRecordId(name, id);
-		await db.insert(new Table(name), payload);
+		await db.insert(table, payload);
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {
@@ -143,7 +146,7 @@ export function manageTable<T extends { id: string | RecordId }>(
 
 		const start = async () => {
 			if (!db.isFeatureSupported(Features.LiveQueries)) return;
-			live = await db.live(new Table(name)).where(args.where);
+			live = await db.live(table).where(args.where);
 			live.subscribe(on);
 		};
 
