@@ -14,7 +14,7 @@ import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { type Container, LoroDoc } from 'loro-crdt';
 import { Features, RecordId } from 'surrealdb';
 
-import { normalizeRecordIdLikeFields, toRecordIdString } from './id';
+import { normalizeRecordIdLikeFields, toRecordId, toRecordIdString } from './id';
 import { manageTable } from './table';
 import type {
 	SurrealCollectionConfig,
@@ -150,7 +150,7 @@ export function surrealCollectionOptions<
 
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
-		new RecordId(config.table.name, keyOf(rid));
+		toRecordId(config.table.name, rid);
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;

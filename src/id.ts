@@ -9,10 +9,18 @@ export const stripOuterQuotes = (value: string): string => {
 	return isSingleQuoted || isDoubleQuoted ? trimmed.slice(1, -1) : trimmed;
 };
 
-export const toRecordIdString = (rid: RecordId | string): string =>
-	typeof rid === 'string'
-		? stripOuterQuotes(rid)
-		: stripOuterQuotes(rid.toString());
+export const toRecordIdString = (rid: RecordId | string): string => {
+	const raw =
+		typeof rid === 'string' ? stripOuterQuotes(rid) : rid.toString();
+	const trimmed = stripOuterQuotes(raw).trim();
+	const idx = trimmed.indexOf(':');
+	if (idx <= 0 || idx >= trimmed.length - 1) return trimmed;
+
+	const table = trimmed.slice(0, idx).trim();
+	const key = stripOuterQuotes(trimmed.slice(idx + 1).trim());
+	if (!table || !key) return trimmed;
+	return `${table}:${key}`;
+};
 
 const isRecordIdString = (value: string): boolean => {
 	const idx = value.indexOf(':');
@@ -20,11 +28,12 @@ const isRecordIdString = (value: string): boolean => {
 };
 
 const parseRecordIdString = (value: string): RecordId | undefined => {
-	if (!isRecordIdString(value)) return undefined;
+	const normalized = toRecordIdString(value);
+	if (!isRecordIdString(normalized)) return undefined;
 
-	const idx = value.indexOf(':');
-	const table = value.slice(0, idx).trim();
-	const key = value.slice(idx + 1).trim();
+	const idx = normalized.indexOf(':');
+	const table = normalized.slice(0, idx).trim();
+	const key = normalized.slice(idx + 1).trim();
 	if (!table || !key) return undefined;
 
 	return new RecordId(table, key);
