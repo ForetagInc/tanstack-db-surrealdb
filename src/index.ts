@@ -59,6 +59,13 @@ type SyncReturn =
 const TEMP_ID_PREFIX = '__temp__';
 const NOOP: Cleanup = () => {};
 
+const disableRefetch = <R>(value: R): R => {
+	if (value && typeof value === 'object') {
+		Object.assign(value as object, { refetch: false });
+	}
+	return value;
+};
+
 const createTempRecordId = (tableName: string): RecordId => {
 	const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 	return new RecordId(tableName, `${TEMP_ID_PREFIX}${suffix}`);
@@ -271,7 +278,9 @@ export function surrealCollectionOptions<
 			}
 			if (shouldCommitLoro) commitLoro();
 
-			return resultRows as unknown as StandardSchema<T>;
+			return disableRefetch(
+				resultRows as unknown as StandardSchema<T>,
+			);
 		}) as InsertMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 
 		onUpdate: (async (p: UpdateMutationFnParams<T>) => {
@@ -303,7 +312,9 @@ export function surrealCollectionOptions<
 			}
 			if (shouldCommitLoro) commitLoro();
 
-			return resultRows as unknown as StandardSchema<T>;
+			return disableRefetch(
+				resultRows as unknown as StandardSchema<T>,
+			);
 		}) as UpdateMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 
 		onDelete: (async (p: DeleteMutationFnParams<T>) => {
@@ -321,7 +332,7 @@ export function surrealCollectionOptions<
 			}
 			if (shouldCommitLoro) commitLoro();
 
-			return [] as unknown as StandardSchema<T>;
+			return disableRefetch([] as unknown as StandardSchema<T>);
 		}) as DeleteMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 	} as never) as SurrealCollectionOptionsReturn<T>;
 
