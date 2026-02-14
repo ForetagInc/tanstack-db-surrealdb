@@ -1,6 +1,6 @@
 # TanstackDB SurrealDB Collections
 
-Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackDB and Loro (CRDTs). Designed for SurrealDB v3.beta-1 and SurrealDB JS SDK v2 (and above).
+Add Offline / Local First Caching & Syncing to your SurrealDB app with TanstackDB and Loro (CRDTs). Designed for SurrealDB v3 and SurrealDB JS SDK v2.
 
 - Local / Offline first applications with TanstackDB and Loro
 - High performance with Low resource consumption
