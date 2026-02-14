@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { RecordId } from 'surrealdb';
+import { DateTime, RecordId } from 'surrealdb';
 
 import { surrealCollectionOptions } from '../src/index';
 
@@ -39,6 +39,24 @@ describe('surrealCollectionOptions schema', () => {
 
 		expect(result.value.id instanceof RecordId).toBe(true);
 		expect((result.value.id as RecordId).toString()).toBe('products:⟨1⟩');
+	});
+
+	it('preserves DateTime-like fields through schema validation', () => {
+		const opts = createOptions();
+		const jsDate = new Date('2026-01-01T00:00:00.000Z');
+		const surrealDate = new DateTime(new Date('2026-01-01T01:00:00.000Z'));
+		const result = opts.schema['~standard'].validate({
+			id: 'products:1',
+			name: 'desk',
+			start_at: jsDate,
+			end_at: surrealDate,
+		}) as {
+			value: Record<string, unknown>;
+		};
+
+		expect(result.value.start_at).toBe(jsDate);
+		expect(result.value.end_at).toBe(surrealDate);
+		expect(result.value.end_at instanceof DateTime).toBe(true);
 	});
 
 	it('returns validation issues for non-object inserts', () => {

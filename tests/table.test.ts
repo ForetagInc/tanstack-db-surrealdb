@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { eq, RecordId } from 'surrealdb';
+import { DateTime, eq, RecordId } from 'surrealdb';
 
 import { manageTable } from '../src/table';
 
 type Product = {
 	id: string | RecordId;
 	name?: string;
+	start_at?: string | Date | DateTime;
+	end_at?: string | Date | DateTime;
+	due_at?: string | Date | DateTime;
 	sync_deleted?: boolean;
 	updated_at?: Date | number | string;
 };
@@ -171,6 +174,46 @@ describe('manageTable', () => {
 		};
 		expect(tombstone.sync_deleted).toBe(true);
 		expect(typeof tombstone.updated_at).toBe('number');
+	});
+
+	it('preserves string/Date/DateTime values when updating datetime fields', async () => {
+		const { db, state } = createDbMock();
+		const rid = new RecordId('products', 'dt-1');
+		const asString = '2026-01-10T12:00:00.000Z';
+		const asDate = new Date('2026-01-11T12:00:00.000Z');
+		const asSurrealDate = new DateTime(new Date('2026-01-12T12:00:00.000Z'));
+
+		const nonLoro = manageTable<Product>(db as never, false, {
+			name: 'products',
+		});
+		await nonLoro.update(rid, {
+			start_at: asString,
+			end_at: asDate,
+			due_at: asSurrealDate,
+		});
+
+		const loro = manageTable<Product>(db as never, true, {
+			name: 'products',
+		});
+		await loro.update(rid, {
+			start_at: asString,
+			end_at: asDate,
+			due_at: asSurrealDate,
+		});
+
+		const nonLoroPayload = state.updated[0]?.payload as Record<string, unknown>;
+		expect(nonLoroPayload.start_at).toBe(asString);
+		expect(nonLoroPayload.end_at).toBe(asDate);
+		expect(nonLoroPayload.due_at).toBe(asSurrealDate);
+		expect(nonLoroPayload.due_at instanceof DateTime).toBe(true);
+
+		const loroPayload = state.updated[1]?.payload as Record<string, unknown>;
+		expect(loroPayload.start_at).toBe(asString);
+		expect(loroPayload.end_at).toBe(asDate);
+		expect(loroPayload.due_at).toBe(asSurrealDate);
+		expect(loroPayload.due_at instanceof DateTime).toBe(true);
+		expect(loroPayload.sync_deleted).toBe(false);
+		expect(typeof loroPayload.updated_at).toBe('number');
 	});
 
 	it('subscribes to live updates and cleans up', async () => {

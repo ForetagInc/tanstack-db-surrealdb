@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { RecordId } from 'surrealdb';
+import { DateTime, RecordId } from 'surrealdb';
 
 import {
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValue,
 	stripOuterQuotes,
+	toRecordKeyString,
 	toRecordId,
 	toRecordIdString,
 } from '../src/id';
@@ -34,6 +35,21 @@ describe('id helpers', () => {
 		expect(out.name).toBe('desk');
 	});
 
+	it('preserves Date and Surreal DateTime fields while normalizing id-like fields', () => {
+		const jsDate = new Date('2026-01-01T00:00:00.000Z');
+		const surrealDate = new DateTime(new Date('2026-01-02T00:00:00.000Z'));
+		const out = normalizeRecordIdLikeFields({
+			id: 'products:1',
+			start_at: jsDate,
+			end_at: surrealDate,
+		});
+
+		expect(out.id instanceof RecordId).toBe(true);
+		expect(out.start_at).toBe(jsDate);
+		expect(out.end_at).toBe(surrealDate);
+		expect(out.end_at instanceof DateTime).toBe(true);
+	});
+
 	it('converts RecordId and strings into table-scoped RecordIds', () => {
 		const fromPlain = toRecordId('products', '1');
 		expect(fromPlain.toString()).toBe('products:⟨1⟩');
@@ -50,5 +66,23 @@ describe('id helpers', () => {
 		expect(toRecordIdString(new RecordId('products', '1'))).toBe(
 			'products:⟨1⟩',
 		);
+	});
+
+	it('normalizes record key variants to the same key part', () => {
+		const key = 'e2d546ed-ff34-4b34-a313-97badfa6a86b';
+		const variants = [
+			`calendar_event:${key}`,
+			`calendar_event:⟨${key}⟩`,
+			`calendar_event:<${key}>`,
+			`calendar_event:\`${key}\``,
+			`'calendar_event:${key}'`,
+			`"calendar_event:${key}"`,
+		];
+
+		for (const variant of variants) {
+			expect(toRecordKeyString(variant)).toBe(key);
+		}
+
+		expect(toRecordKeyString(new RecordId('calendar_event', key))).toBe(key);
 	});
 });

@@ -45,6 +45,7 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 	};
 
 export type { SurrealSubset } from './types';
+export { toRecordKeyString } from './id';
 
 type SyncReturn =
 	| undefined
@@ -271,8 +272,7 @@ export function surrealCollectionOptions<
 			}
 			if (shouldCommitLoro) commitLoro();
 
-			void resultRows;
-			return { refetch: false } as unknown as StandardSchema<T>;
+			return resultRows as unknown as StandardSchema<T>;
 		}) as InsertMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 
 		onUpdate: (async (p: UpdateMutationFnParams<T>) => {

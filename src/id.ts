@@ -6,7 +6,11 @@ export const stripOuterQuotes = (value: string): string => {
 		trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2;
 	const isDoubleQuoted =
 		trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2;
-	return isSingleQuoted || isDoubleQuoted ? trimmed.slice(1, -1) : trimmed;
+	const isBacktickQuoted =
+		trimmed.startsWith('`') && trimmed.endsWith('`') && trimmed.length >= 2;
+	return isSingleQuoted || isDoubleQuoted || isBacktickQuoted
+		? trimmed.slice(1, -1)
+		: trimmed;
 };
 
 export const toRecordIdString = (rid: RecordId | string): string => {
@@ -24,7 +28,11 @@ export const toRecordIdString = (rid: RecordId | string): string => {
 
 const stripAngleBrackets = (value: string): string => {
 	const trimmed = value.trim();
-	return trimmed.startsWith('⟨') && trimmed.endsWith('⟩') && trimmed.length >= 2
+	const isSurrealAngles =
+		trimmed.startsWith('⟨') && trimmed.endsWith('⟩') && trimmed.length >= 2;
+	const isAsciiAngles =
+		trimmed.startsWith('<') && trimmed.endsWith('>') && trimmed.length >= 2;
+	return isSurrealAngles || isAsciiAngles
 		? trimmed.slice(1, -1).trim()
 		: trimmed;
 };
@@ -33,7 +41,7 @@ export const toRecordKeyString = (rid: RecordId | string): string => {
 	const normalized = toRecordIdString(rid);
 	const idx = normalized.indexOf(':');
 	const rawKey = idx > 0 ? normalized.slice(idx + 1) : normalized;
-	return stripAngleBrackets(stripOuterQuotes(rawKey.trim()));
+	return stripOuterQuotes(stripAngleBrackets(stripOuterQuotes(rawKey.trim())));
 };
 
 const isRecordIdString = (value: string): boolean => {
