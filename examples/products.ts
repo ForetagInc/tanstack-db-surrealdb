@@ -3,8 +3,8 @@ import { surrealCollectionOptions } from '../dist';
 import { RecordId, Surreal, eq, or } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
-import { useLiveQuery } from '@tanstack/svelte-db';
-import { QueryClient } from '@tanstack/svelte-query';
+import { useLiveQuery } from '@tanstack/react-db';
+import { QueryClient } from '@tanstack/react-query';
 
 const db = new Surreal();
 const queryClient = new QueryClient();

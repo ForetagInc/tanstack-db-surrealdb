@@ -3,6 +3,7 @@
 		"lib": ["ESNext"],
 		"target": "ES2024",
 		"module": "ESNext",
-		"moduleResolution": "bundler"
+		"moduleResolution": "bundler",
+		"types": ["bun"]
 	}
 }

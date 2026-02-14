@@ -3,8 +3,8 @@ import { surrealCollectionOptions, type SurrealSubset } from '../dist';
 import { eq, Surreal } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
-import { QueryClient } from '@tanstack/svelte-query'; // can also be '@tanstack/react-query' or '@tanstack/svelte-query'
-import { useLiveQuery } from '@tanstack/svelte-db';
+import { QueryClient } from '@tanstack/react-query'; // can also be '@tanstack/svelte-query' etc.
+import { useLiveQuery } from '@tanstack/react-db';
 
 const db = new Surreal();
 const queryClient = new QueryClient();
