@@ -22,6 +22,20 @@ export const toRecordIdString = (rid: RecordId | string): string => {
 	return `${table}:${key}`;
 };
 
+const stripAngleBrackets = (value: string): string => {
+	const trimmed = value.trim();
+	return trimmed.startsWith('⟨') && trimmed.endsWith('⟩') && trimmed.length >= 2
+		? trimmed.slice(1, -1).trim()
+		: trimmed;
+};
+
+export const toRecordKeyString = (rid: RecordId | string): string => {
+	const normalized = toRecordIdString(rid);
+	const idx = normalized.indexOf(':');
+	const rawKey = idx > 0 ? normalized.slice(idx + 1) : normalized;
+	return stripAngleBrackets(stripOuterQuotes(rawKey.trim()));
+};
+
 const isRecordIdString = (value: string): boolean => {
 	const idx = value.indexOf(':');
 	return idx > 0 && idx < value.length - 1;

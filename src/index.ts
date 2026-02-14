@@ -14,7 +14,12 @@ import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { type Container, LoroDoc } from 'loro-crdt';
 import { Features, RecordId } from 'surrealdb';
 
-import { normalizeRecordIdLikeFields, toRecordId, toRecordIdString } from './id';
+import {
+	normalizeRecordIdLikeFields,
+	toRecordId,
+	toRecordIdString,
+	toRecordKeyString,
+} from './id';
 import { manageTable } from './table';
 import type {
 	SurrealCollectionConfig,
@@ -146,7 +151,7 @@ export function surrealCollectionOptions<
 
 	const table = manageTable<T>(db, useLoro, config.table);
 
-	const keyOf = (rid: RecordId | string): string => toRecordIdString(rid);
+	const keyOf = (rid: RecordId | string): string => toRecordKeyString(rid);
 
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
@@ -243,15 +248,26 @@ export function surrealCollectionOptions<
 					shouldCommitLoro = true;
 				}
 				if (isTempId(row.id, config.table.name)) {
+					const tempKey = keyOf(row.id);
 					const { id: _id, ...payload } = row as Record<
 						string,
 						unknown
 					>;
-					await table.create(payload as Partial<T>);
+					const persisted = await table.create(payload as Partial<T>);
+					const resolvedRow =
+						persisted && persisted.id
+							? ({ ...row, ...persisted, id: persisted.id } as T)
+							: row;
+
+					if (useLoro && persisted?.id) {
+						loroRemove(tempKey, false);
+						loroPut(resolvedRow, false);
+					}
+					resultRows.push(resolvedRow);
 				} else {
-					await table.create(row);
+					const persisted = await table.create(row);
+					resultRows.push((persisted ? { ...row, ...persisted } : row) as T);
 				}
-				resultRows.push(row);
 			}
 			if (shouldCommitLoro) commitLoro();
 

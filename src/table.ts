@@ -32,6 +32,13 @@ const joinOrderBy = (
 };
 
 type QueryResult<T> = T[] | null;
+type RowResult<T> = T | T[] | null;
+
+const firstRow = <T>(res: RowResult<T>): T | undefined => {
+	if (!res) return undefined;
+	if (Array.isArray(res)) return res[0];
+	return res;
+};
 
 export function manageTable<T extends { id: string | RecordId }>(
 	db: Surreal,
@@ -85,16 +92,17 @@ export function manageTable<T extends { id: string | RecordId }>(
 		return res ?? [];
 	};
 
-	const create = async (data: T | Partial<T>) => {
+	const create = async (data: T | Partial<T>): Promise<T | undefined> => {
 		const id = (data as Partial<T> & { id?: string | RecordId }).id;
 		if (!id) {
-			await db.create(table).content(data);
-			return;
+			const created = await db.create(table).content(data);
+			return firstRow(created as RowResult<T>);
 		}
 
 		const payload = { ...(data as Record<string, unknown>) };
 		payload.id = toRecordId(name, id);
-		await db.insert(table, payload);
+		const inserted = await db.insert(table, payload);
+		return firstRow(inserted as RowResult<T>);
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {
