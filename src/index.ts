@@ -44,7 +44,6 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 		utils: UtilsRecord;
 	};
 
-export type { SurrealSubset } from './types';
 export { toRecordKeyString } from './id';
 
 type SyncReturn =
@@ -60,6 +59,11 @@ type SyncReturn =
 const TEMP_ID_PREFIX = '__temp__';
 const NOOP: Cleanup = () => {};
 
+type QueryWriteUtils = {
+	writeUpsert?: (data: unknown) => void;
+	writeDelete?: (key: string) => void;
+};
+
 const createTempRecordId = (tableName: string): RecordId => {
 	const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 	return new RecordId(tableName, `${TEMP_ID_PREFIX}${suffix}`);
@@ -69,7 +73,8 @@ const isTempId = (id: string | RecordId, tableName: string): boolean => {
 	if (id instanceof RecordId) {
 		const recordKey = (id as unknown as { id?: unknown }).id;
 		return (
-			typeof recordKey === 'string' && recordKey.startsWith(TEMP_ID_PREFIX)
+			typeof recordKey === 'string' &&
+			recordKey.startsWith(TEMP_ID_PREFIX)
 		);
 	}
 
@@ -95,6 +100,11 @@ function hasLoadSubset(
 	return typeof res === 'object' && res !== null && 'loadSubset' in res;
 }
 
+const getWriteUtils = (utils: unknown): QueryWriteUtils =>
+	typeof utils === 'object' && utils !== null
+		? (utils as QueryWriteUtils)
+		: {};
+
 function createInsertSchema<T extends { id: string | RecordId }>(
 	tableName: string,
 ): StandardSchemaV1<MutationInput<T>, T> {
@@ -117,7 +127,8 @@ function createInsertSchema<T extends { id: string | RecordId }>(
 					...(value as Record<string, unknown>),
 				}) as MutationInput<T>;
 
-				if (!data.id) data.id = createTempRecordId(tableName) as T['id'];
+				if (!data.id)
+					data.id = createTempRecordId(tableName) as T['id'];
 
 				return { value: data as T };
 			},
@@ -255,10 +266,9 @@ export function surrealCollectionOptions<
 						unknown
 					>;
 					const persisted = await table.create(payload as Partial<T>);
-					const resolvedRow =
-						persisted && persisted.id
-							? ({ ...row, ...persisted, id: persisted.id } as T)
-							: row;
+					const resolvedRow = persisted?.id
+						? ({ ...row, ...persisted, id: persisted.id } as T)
+						: row;
 
 					if (useLoro && persisted?.id) {
 						loroRemove(tempKey, false);
@@ -267,7 +277,9 @@ export function surrealCollectionOptions<
 					resultRows.push(resolvedRow);
 				} else {
 					const persisted = await table.create(row);
-					resultRows.push((persisted ? { ...row, ...persisted } : row) as T);
+					resultRows.push(
+						(persisted ? { ...row, ...persisted } : row) as T,
+					);
 				}
 			}
 			if (shouldCommitLoro) commitLoro();
@@ -277,6 +289,7 @@ export function surrealCollectionOptions<
 
 		onUpdate: (async (p: UpdateMutationFnParams<T>) => {
 			const now = new Date();
+			const writeUtils = getWriteUtils(p.collection.utils);
 
 			const resultRows: T[] = [];
 			let shouldCommitLoro = false;
@@ -299,6 +312,7 @@ export function surrealCollectionOptions<
 				}
 
 				await table.update(normalizeMutationId(idKey), row);
+				writeUtils.writeUpsert?.(row);
 
 				resultRows.push(row);
 			}
@@ -309,17 +323,20 @@ export function surrealCollectionOptions<
 		}) as UpdateMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
 
 		onDelete: (async (p: DeleteMutationFnParams<T>) => {
+			const writeUtils = getWriteUtils(p.collection.utils);
 			let shouldCommitLoro = false;
 			for (const m of p.transaction.mutations) {
 				if (m.type !== 'delete') continue;
 
 				const idKey = m.key as RecordId;
+				const key = keyOf(idKey);
 				if (useLoro) {
-					loroRemove(keyOf(idKey), false);
+					loroRemove(key, false);
 					shouldCommitLoro = true;
 				}
 
 				await table.softDelete(normalizeMutationId(idKey));
+				writeUtils.writeDelete?.(key);
 			}
 			if (shouldCommitLoro) commitLoro();
 
