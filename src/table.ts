@@ -106,12 +106,13 @@ export function manageTable<T extends { id: string | RecordId }>(
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {
+		const { id: _ignoredId, ...rest } = data as Record<string, unknown>;
 		if (!useLoro) {
-			await db.update(id).merge(data);
+			await db.update(id).merge(rest);
 			return;
 		}
 		await db.update(id).merge({
-			...data,
+			...rest,
 			sync_deleted: false,
 			updated_at: Date.now(),
 		});

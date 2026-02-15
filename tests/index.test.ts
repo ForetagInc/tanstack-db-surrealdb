@@ -168,6 +168,7 @@ describe('surrealCollectionOptions schema', () => {
 		expect(updates[0]?.payload.end_at).toBe(endAt);
 		expect(updates[0]?.payload.due_at).toBe(dueAt);
 		expect(updates[0]?.payload.due_at instanceof DateTime).toBe(true);
+		expect('id' in (updates[0]?.payload ?? {})).toBe(false);
 		expect('ignored_undefined' in (updates[0]?.payload ?? {})).toBe(false);
 
 		expect(writeUpserts.length).toBe(1);
