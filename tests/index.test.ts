@@ -69,4 +69,110 @@ describe('surrealCollectionOptions schema', () => {
 			'Insert data must be an object.',
 		);
 	});
+
+	it('normalizes getKey output across id variants', () => {
+		const opts = createOptions();
+		const key = 'e2d546ed-ff34-4b34-a313-97badfa6a86b';
+		const variants = [
+			`products:${key}`,
+			`products:⟨${key}⟩`,
+			`products:<${key}>`,
+			`products:\`${key}\``,
+			`"products:${key}"`,
+			new RecordId('products', key),
+		];
+
+		for (const variant of variants) {
+			expect(
+				opts.getKey({
+					id: variant as string | RecordId,
+					name: 'desk',
+				}),
+			).toBe(`products:${key}`);
+		}
+	});
+
+	it('onUpdate normalizes id variants and preserves datetime value types', async () => {
+		type CalendarEvent = {
+			id: string | RecordId;
+			name: string;
+			start_at?: string | Date | DateTime;
+			end_at?: string | Date | DateTime;
+			updated_at?: Date | number | string;
+		};
+
+		const updates: Array<{ id: RecordId; payload: Record<string, unknown> }> = [];
+		const writeUpserts: Array<Record<string, unknown>> = [];
+
+		const db = {
+			update: (id: RecordId) => ({
+				merge: async (payload: Record<string, unknown>) => {
+					updates.push({ id, payload });
+				},
+			}),
+			create: () => ({ content: async () => ({}) }),
+			insert: async () => ({}),
+			query: async () => [[]],
+			delete: async () => {},
+			upsert: () => ({ merge: async () => {} }),
+			isFeatureSupported: () => false,
+			live: () => ({
+				where: () => ({
+					subscribe: () => {},
+					kill: async () => {},
+				}),
+			}),
+		};
+
+		const opts = surrealCollectionOptions<CalendarEvent>({
+			db: db as never,
+			queryClient: {} as never,
+			queryKey: ['calendarEvents'],
+			table: { name: 'products' },
+		});
+
+		const startAt = '2026-01-10T12:00:00.000Z';
+		const endAt = new Date('2026-01-11T12:00:00.000Z');
+		const dueAt = new DateTime(new Date('2026-01-12T12:00:00.000Z'));
+
+		await opts.onUpdate?.({
+			transaction: {
+				mutations: [
+					{
+						type: 'update',
+						key: 'products:⟨e2d546ed-ff34-4b34-a313-97badfa6a86b⟩',
+						modified: {
+							name: 'updated',
+							start_at: startAt,
+							end_at: endAt,
+							due_at: dueAt,
+							ignored_undefined: undefined,
+						},
+					},
+				],
+			} as never,
+			collection: {
+				utils: {
+					writeUpsert: (value: Record<string, unknown>) => {
+						writeUpserts.push(value);
+					},
+				},
+			} as never,
+		});
+
+		expect(updates.length).toBe(1);
+		expect(updates[0]?.id.toString()).toBe(
+			'products:⟨e2d546ed-ff34-4b34-a313-97badfa6a86b⟩',
+		);
+		expect(updates[0]?.payload.start_at).toBe(startAt);
+		expect(updates[0]?.payload.end_at).toBe(endAt);
+		expect(updates[0]?.payload.due_at).toBe(dueAt);
+		expect(updates[0]?.payload.due_at instanceof DateTime).toBe(true);
+		expect('ignored_undefined' in (updates[0]?.payload ?? {})).toBe(false);
+
+		expect(writeUpserts.length).toBe(1);
+		expect(writeUpserts[0]?.id).toBe(
+			'products:⟨e2d546ed-ff34-4b34-a313-97badfa6a86b⟩',
+		);
+	});
 });

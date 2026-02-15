@@ -18,7 +18,6 @@ import {
 	normalizeRecordIdLikeFields,
 	toRecordId,
 	toRecordIdString,
-	toRecordKeyString,
 } from './id';
 import { manageTable } from './table';
 import type {
@@ -105,6 +104,11 @@ const getWriteUtils = (utils: unknown): QueryWriteUtils =>
 		? (utils as QueryWriteUtils)
 		: {};
 
+const omitUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
+	Object.fromEntries(
+		Object.entries(obj).filter(([, value]) => value !== undefined),
+	) as Partial<T>;
+
 function createInsertSchema<T extends { id: string | RecordId }>(
 	tableName: string,
 ): StandardSchemaV1<MutationInput<T>, T> {
@@ -163,7 +167,7 @@ export function surrealCollectionOptions<
 
 	const table = manageTable<T>(db, useLoro, config.table);
 
-	const keyOf = (rid: RecordId | string): string => toRecordKeyString(rid);
+	const keyOf = (rid: RecordId | string): string => toRecordIdString(rid);
 
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
@@ -297,9 +301,11 @@ export function surrealCollectionOptions<
 				if (m.type !== 'update') continue;
 
 				const idKey = m.key as RecordId;
-				const normalizedModified = normalizeRecordIdLikeFields({
-					...(m.modified as Record<string, unknown>),
-				}) as Partial<T>;
+				const normalizedModified = omitUndefined(
+					normalizeRecordIdLikeFields({
+						...(m.modified as Record<string, unknown>),
+					}) as Record<string, unknown>,
+				) as Partial<T>;
 				const baseRow = { ...normalizedModified, id: idKey } as T;
 
 				const row = useLoro

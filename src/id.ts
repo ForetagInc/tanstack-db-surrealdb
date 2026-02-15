@@ -21,7 +21,9 @@ export const toRecordIdString = (rid: RecordId | string): string => {
 	if (idx <= 0 || idx >= trimmed.length - 1) return trimmed;
 
 	const table = trimmed.slice(0, idx).trim();
-	const key = stripOuterQuotes(trimmed.slice(idx + 1).trim());
+	const key = stripOuterQuotes(
+		stripAngleBrackets(stripOuterQuotes(trimmed.slice(idx + 1).trim())),
+	);
 	if (!table || !key) return trimmed;
 	return `${table}:${key}`;
 };
@@ -41,7 +43,7 @@ export const toRecordKeyString = (rid: RecordId | string): string => {
 	const normalized = toRecordIdString(rid);
 	const idx = normalized.indexOf(':');
 	const rawKey = idx > 0 ? normalized.slice(idx + 1) : normalized;
-	return stripOuterQuotes(stripAngleBrackets(stripOuterQuotes(rawKey.trim())));
+	return stripOuterQuotes(rawKey.trim());
 };
 
 const isRecordIdString = (value: string): boolean => {
@@ -49,14 +51,17 @@ const isRecordIdString = (value: string): boolean => {
 	return idx > 0 && idx < value.length - 1;
 };
 
+const looksLikeTableName = (value: string): boolean =>
+	/^[A-Za-z_][A-Za-z0-9_-]*$/.test(value);
+
 const parseRecordIdString = (value: string): RecordId | undefined => {
 	const normalized = toRecordIdString(value);
 	if (!isRecordIdString(normalized)) return undefined;
 
 	const idx = normalized.indexOf(':');
-	const table = normalized.slice(0, idx).trim();
+	const table = stripOuterQuotes(normalized.slice(0, idx).trim());
 	const key = normalized.slice(idx + 1).trim();
-	if (!table || !key) return undefined;
+	if (!table || !key || !looksLikeTableName(table)) return undefined;
 
 	return new RecordId(table, key);
 };

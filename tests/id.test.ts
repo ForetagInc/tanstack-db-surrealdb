@@ -63,9 +63,7 @@ describe('id helpers', () => {
 
 	it('normalizes RecordId|string to stable string form', () => {
 		expect(toRecordIdString("'products:1'")).toBe('products:1');
-		expect(toRecordIdString(new RecordId('products', '1'))).toBe(
-			'products:⟨1⟩',
-		);
+		expect(toRecordIdString(new RecordId('products', '1'))).toBe('products:1');
 	});
 
 	it('normalizes record key variants to the same key part', () => {
@@ -84,5 +82,25 @@ describe('id helpers', () => {
 		}
 
 		expect(toRecordKeyString(new RecordId('calendar_event', key))).toBe(key);
+	});
+
+	it('normalizes full record-id variants to canonical table:key form', () => {
+		const key = 'e2d546ed-ff34-4b34-a313-97badfa6a86b';
+		const variants = [
+			`calendar_event:${key}`,
+			`calendar_event:⟨${key}⟩`,
+			`calendar_event:<${key}>`,
+			`calendar_event:\`${key}\``,
+			`'calendar_event:${key}'`,
+			`"calendar_event:${key}"`,
+		];
+
+		for (const variant of variants) {
+			expect(toRecordIdString(variant)).toBe(`calendar_event:${key}`);
+		}
+
+		expect(toRecordIdString(new RecordId('calendar_event', key))).toBe(
+			`calendar_event:${key}`,
+		);
 	});
 });
