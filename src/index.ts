@@ -5,7 +5,9 @@ import type {
 	DeleteMutationFnParams,
 	InsertMutationFn,
 	InsertMutationFnParams,
+	OperationConfig,
 	StandardSchema,
+	Transaction,
 	UpdateMutationFn,
 	UpdateMutationFnParams,
 	UtilsRecord,
@@ -43,7 +45,23 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 		utils: UtilsRecord;
 	};
 
-export { toRecordKeyString } from './id';
+export type { SurrealSubset } from './types';
+
+declare module '@tanstack/db' {
+	interface Collection<
+		T extends object = Record<string, unknown>,
+		TKey extends string | number = string | number,
+		TUtils extends UtilsRecord = UtilsRecord,
+		TSchema extends StandardSchemaV1 = StandardSchemaV1,
+		TInsertInput extends object = T,
+	> {
+		delete(
+			keys: Array<TKey | RecordId | string> | TKey | RecordId | string,
+			config?: OperationConfig,
+			// biome-ignore lint/suspicious/noExplicitAny: Match TanstackDB
+		): Transaction<any>;
+	}
+}
 
 type SyncReturn =
 	| undefined
@@ -173,7 +191,7 @@ export function surrealCollectionOptions<
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
 		toRecordId(config.table.name, rid);
 	const withNormalizedId = (row: T): T =>
-		({ ...row, id: keyOf(row.id) } as T);
+		({ ...row, id: keyOf(row.id) }) as T;
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
@@ -236,9 +254,9 @@ export function surrealCollectionOptions<
 						? await table.listAll()
 						: await table.loadSubset(subset);
 
-					return mergeLocalOverServer(rows).map((row) =>
-						withNormalizedId(row),
-					);
+				return mergeLocalOverServer(rows).map((row) =>
+					withNormalizedId(row),
+				);
 			} catch (e) {
 				onError?.(e);
 				return [];
@@ -255,51 +273,50 @@ export function surrealCollectionOptions<
 
 				const baseRow = { ...m.modified } as T;
 
-					const row = useLoro
-						? ({
-								...baseRow,
-								updated_at: now,
-								sync_deleted: false,
+				const row = useLoro
+					? ({
+							...baseRow,
+							updated_at: now,
+							sync_deleted: false,
+						} as T)
+					: baseRow;
+				const normalizedRow = withNormalizedId(row);
+
+				if (useLoro) {
+					loroPut(normalizedRow, false);
+					shouldCommitLoro = true;
+				}
+				if (isTempId(normalizedRow.id, config.table.name)) {
+					const tempKey = keyOf(normalizedRow.id);
+					const { id: _id, ...payload } = normalizedRow as Record<
+						string,
+						unknown
+					>;
+					const persisted = await table.create(payload as Partial<T>);
+					const resolvedRow = persisted?.id
+						? withNormalizedId({
+								...normalizedRow,
+								...persisted,
+								id: persisted.id,
 							} as T)
-						: baseRow;
-					const normalizedRow = withNormalizedId(row);
+						: normalizedRow;
 
-					if (useLoro) {
-						loroPut(normalizedRow, false);
-						shouldCommitLoro = true;
+					if (useLoro && persisted?.id) {
+						loroRemove(tempKey, false);
+						loroPut(resolvedRow, false);
 					}
-					if (isTempId(normalizedRow.id, config.table.name)) {
-						const tempKey = keyOf(normalizedRow.id);
-						const { id: _id, ...payload } = normalizedRow as Record<
-							string,
-							unknown
-						>;
-						const persisted = await table.create(payload as Partial<T>);
-						const resolvedRow = persisted?.id
-							? withNormalizedId(
-									{
-										...normalizedRow,
-										...persisted,
-										id: persisted.id,
-									} as T,
-								)
-							: normalizedRow;
-
-						if (useLoro && persisted?.id) {
-							loroRemove(tempKey, false);
-							loroPut(resolvedRow, false);
-						}
-						resultRows.push(resolvedRow);
-					} else {
-						const persisted = await table.create(normalizedRow);
-						resultRows.push(
-							persisted
-								? withNormalizedId(
-										{ ...normalizedRow, ...persisted } as T,
-									)
-								: normalizedRow,
-						);
-					}
+					resultRows.push(resolvedRow);
+				} else {
+					const persisted = await table.create(normalizedRow);
+					resultRows.push(
+						persisted
+							? withNormalizedId({
+									...normalizedRow,
+									...persisted,
+								} as T)
+							: normalizedRow,
+					);
+				}
 			}
 			if (shouldCommitLoro) commitLoro();
 
@@ -321,26 +338,26 @@ export function surrealCollectionOptions<
 						...(m.modified as Record<string, unknown>),
 					}) as Record<string, unknown>,
 				) as Partial<T>;
-					const baseRow = {
-						...normalizedModified,
-						id: keyOf(idKey),
-					} as T;
+				const baseRow = {
+					...normalizedModified,
+					id: keyOf(idKey),
+				} as T;
 
-					const row = useLoro
-						? ({ ...baseRow, updated_at: now } as T)
-						: baseRow;
-					const normalizedRow = withNormalizedId(row);
+				const row = useLoro
+					? ({ ...baseRow, updated_at: now } as T)
+					: baseRow;
+				const normalizedRow = withNormalizedId(row);
 
-					if (useLoro) {
-						loroPut(normalizedRow, false);
-						shouldCommitLoro = true;
-					}
-
-					await table.update(normalizeMutationId(idKey), normalizedRow);
-					writeUtils.writeUpsert?.(normalizedRow);
-
-					resultRows.push(normalizedRow);
+				if (useLoro) {
+					loroPut(normalizedRow, false);
+					shouldCommitLoro = true;
 				}
+
+				await table.update(normalizeMutationId(idKey), normalizedRow);
+				writeUtils.writeUpsert?.(normalizedRow);
+
+				resultRows.push(normalizedRow);
+			}
 			if (shouldCommitLoro) commitLoro();
 
 			void resultRows;

@@ -176,4 +176,5 @@ describe('surrealCollectionOptions schema', () => {
 			'products:e2d546ed-ff34-4b34-a313-97badfa6a86b',
 		);
 	});
+
 });
