@@ -172,7 +172,7 @@ describe('surrealCollectionOptions schema', () => {
 
 		expect(writeUpserts.length).toBe(1);
 		expect(writeUpserts[0]?.id).toBe(
-			'products:⟨e2d546ed-ff34-4b34-a313-97badfa6a86b⟩',
+			'products:e2d546ed-ff34-4b34-a313-97badfa6a86b',
 		);
 	});
 });

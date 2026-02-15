@@ -172,6 +172,8 @@ export function surrealCollectionOptions<
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
 		toRecordId(config.table.name, rid);
+	const withNormalizedId = (row: T): T =>
+		({ ...row, id: keyOf(row.id) } as T);
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
@@ -234,7 +236,9 @@ export function surrealCollectionOptions<
 						? await table.listAll()
 						: await table.loadSubset(subset);
 
-				return mergeLocalOverServer(rows);
+					return mergeLocalOverServer(rows).map((row) =>
+						withNormalizedId(row),
+					);
 			} catch (e) {
 				onError?.(e);
 				return [];
@@ -251,40 +255,51 @@ export function surrealCollectionOptions<
 
 				const baseRow = { ...m.modified } as T;
 
-				const row = useLoro
-					? ({
-							...baseRow,
-							updated_at: now,
-							sync_deleted: false,
-						} as T)
-					: baseRow;
+					const row = useLoro
+						? ({
+								...baseRow,
+								updated_at: now,
+								sync_deleted: false,
+							} as T)
+						: baseRow;
+					const normalizedRow = withNormalizedId(row);
 
-				if (useLoro) {
-					loroPut(row, false);
-					shouldCommitLoro = true;
-				}
-				if (isTempId(row.id, config.table.name)) {
-					const tempKey = keyOf(row.id);
-					const { id: _id, ...payload } = row as Record<
-						string,
-						unknown
-					>;
-					const persisted = await table.create(payload as Partial<T>);
-					const resolvedRow = persisted?.id
-						? ({ ...row, ...persisted, id: persisted.id } as T)
-						: row;
-
-					if (useLoro && persisted?.id) {
-						loroRemove(tempKey, false);
-						loroPut(resolvedRow, false);
+					if (useLoro) {
+						loroPut(normalizedRow, false);
+						shouldCommitLoro = true;
 					}
-					resultRows.push(resolvedRow);
-				} else {
-					const persisted = await table.create(row);
-					resultRows.push(
-						(persisted ? { ...row, ...persisted } : row) as T,
-					);
-				}
+					if (isTempId(normalizedRow.id, config.table.name)) {
+						const tempKey = keyOf(normalizedRow.id);
+						const { id: _id, ...payload } = normalizedRow as Record<
+							string,
+							unknown
+						>;
+						const persisted = await table.create(payload as Partial<T>);
+						const resolvedRow = persisted?.id
+							? withNormalizedId(
+									{
+										...normalizedRow,
+										...persisted,
+										id: persisted.id,
+									} as T,
+								)
+							: normalizedRow;
+
+						if (useLoro && persisted?.id) {
+							loroRemove(tempKey, false);
+							loroPut(resolvedRow, false);
+						}
+						resultRows.push(resolvedRow);
+					} else {
+						const persisted = await table.create(normalizedRow);
+						resultRows.push(
+							persisted
+								? withNormalizedId(
+										{ ...normalizedRow, ...persisted } as T,
+									)
+								: normalizedRow,
+						);
+					}
 			}
 			if (shouldCommitLoro) commitLoro();
 
@@ -306,22 +321,26 @@ export function surrealCollectionOptions<
 						...(m.modified as Record<string, unknown>),
 					}) as Record<string, unknown>,
 				) as Partial<T>;
-				const baseRow = { ...normalizedModified, id: idKey } as T;
+					const baseRow = {
+						...normalizedModified,
+						id: keyOf(idKey),
+					} as T;
 
-				const row = useLoro
-					? ({ ...baseRow, updated_at: now } as T)
-					: baseRow;
+					const row = useLoro
+						? ({ ...baseRow, updated_at: now } as T)
+						: baseRow;
+					const normalizedRow = withNormalizedId(row);
 
-				if (useLoro) {
-					loroPut(row, false);
-					shouldCommitLoro = true;
+					if (useLoro) {
+						loroPut(normalizedRow, false);
+						shouldCommitLoro = true;
+					}
+
+					await table.update(normalizeMutationId(idKey), normalizedRow);
+					writeUtils.writeUpsert?.(normalizedRow);
+
+					resultRows.push(normalizedRow);
 				}
-
-				await table.update(normalizeMutationId(idKey), row);
-				writeUtils.writeUpsert?.(row);
-
-				resultRows.push(row);
-			}
 			if (shouldCommitLoro) commitLoro();
 
 			void resultRows;
