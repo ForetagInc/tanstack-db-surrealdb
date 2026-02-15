@@ -45,7 +45,7 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 		utils: UtilsRecord;
 	};
 
-export { toRecordIdString } from './id';
+export { toRecordKeyString } from './id';
 export type { SurrealSubset } from './types';
 
 declare module '@tanstack/db' {
