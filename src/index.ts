@@ -21,8 +21,13 @@ import {
 	toRecordId,
 	toRecordIdString,
 } from './id';
+import { serializeSurrealSubsetOptions } from './queryKey';
 import { manageTable } from './table';
-import type { SurrealCollectionConfig, SyncedTable } from './types';
+import type {
+	SurrealCollectionConfig,
+	SurrealSubset,
+	SyncedTable,
+} from './types';
 
 type Cleanup = () => void;
 
@@ -178,6 +183,15 @@ export function surrealCollectionOptions<
 } {
 	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
 	if (useLoro) loro = { doc: new LoroDoc(), key: id };
+	const resolvedQueryKey =
+		syncMode === 'on-demand'
+			? (opts: SurrealSubset = {}) => {
+					const serialized = serializeSurrealSubsetOptions(opts);
+					return serialized
+						? [...queryKey, serialized]
+						: [...queryKey];
+				}
+			: queryKey;
 
 	const table = manageTable<T>(db, useLoro, config.table);
 
@@ -234,7 +248,7 @@ export function surrealCollectionOptions<
 		schema: createInsertSchema<T>(config.table.name),
 		getKey,
 
-		queryKey,
+		queryKey: resolvedQueryKey,
 		queryClient,
 
 		syncMode,
