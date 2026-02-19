@@ -41,10 +41,8 @@ describe('CRDT behavior (useLoro=true)', () => {
 			insert: async () => {},
 			isFeatureSupported: () => false,
 			live: () => ({
-				where: () => ({
-					subscribe: () => {},
-					kill: async () => {},
-				}),
+				subscribe: () => {},
+				kill: async () => {},
 			}),
 		};
 
@@ -55,8 +53,7 @@ describe('CRDT behavior (useLoro=true)', () => {
 		await table.update(rid, { name: 'desk' });
 		await table.softDelete(rid);
 
-		expect(queries[0]?.sql).toContain('WHERE $where');
-		expect(queries[0]?.params.where).toBeTruthy();
+		expect(queries[0]?.sql).toContain('WHERE (sync_deleted = false)');
 
 		expect(updates.length).toBe(1);
 		expect(updates[0]?.payload.sync_deleted).toBe(false);

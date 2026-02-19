@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { DateTime, eq, RecordId } from 'surrealdb';
+import { DateTime, RecordId } from 'surrealdb';
 
 import { manageTable } from '../src/table';
 
@@ -14,6 +14,15 @@ type Product = {
 };
 
 const createDbMock = () => {
+	const ref = (field: string) => ({ type: 'ref', path: [field] }) as const;
+	const val = (value: unknown) => ({ type: 'val', value }) as const;
+	const eqExpr = (field: string, value: unknown) =>
+		({ type: 'func', name: 'eq', args: [ref(field), val(value)] }) as const;
+	const inExpr = (field: string, value: unknown[]) =>
+		({ type: 'func', name: 'in', args: [ref(field), val(value)] }) as const;
+	const andExpr = (...args: unknown[]) =>
+		({ type: 'func', name: 'and', args }) as const;
+
 	const state: {
 		queries: Array<{ sql: string; params: Record<string, unknown> }>;
 		createdContent: unknown[];
@@ -21,7 +30,7 @@ const createDbMock = () => {
 		updated: Array<{ id: unknown; payload: unknown }>;
 		deleted: unknown[];
 		upserted: Array<{ id: unknown; payload: unknown }>;
-		liveWhere: unknown[];
+		liveCalls: number;
 		liveKillCount: number;
 		supportLiveQueries: boolean;
 		liveSubscriber?: (msg: unknown) => void;
@@ -32,7 +41,7 @@ const createDbMock = () => {
 		updated: [],
 		deleted: [],
 		upserted: [],
-		liveWhere: [],
+		liveCalls: 0,
 		liveKillCount: 0,
 		supportLiveQueries: true,
 	};
@@ -65,45 +74,53 @@ const createDbMock = () => {
 		}),
 		isFeatureSupported: () => state.supportLiveQueries,
 		live: () => ({
-			where: (whereExpr: unknown) => {
-				state.liveWhere.push(whereExpr);
-				return {
-					subscribe: (cb: (msg: unknown) => void) => {
-						state.liveSubscriber = cb;
-					},
-					kill: async () => {
-						state.liveKillCount += 1;
-					},
-				};
+			subscribe: (cb: (msg: unknown) => void) => {
+				state.liveCalls += 1;
+				state.liveSubscriber = cb;
+			},
+			kill: async () => {
+				state.liveKillCount += 1;
 			},
 		}),
 	};
 
-	return { db, state };
+	return { db, state, eqExpr, inExpr, andExpr, ref };
 };
 
 describe('manageTable', () => {
-	it('builds listAll query and subset query correctly', async () => {
-		const { db, state } = createDbMock();
+	it('builds listAll query and translates loadSubset options to SQL', async () => {
+		const { db, state, eqExpr, ref } = createDbMock();
 		const table = manageTable<Product>(db as never, false, {
 			name: 'products',
-			fields: ['id', 'name'],
-			where: eq('active', true),
 		});
 
 		await table.listAll();
 		await table.loadSubset({
-			orderBy: ['name DESC', 'id ASC'],
+			where: eqExpr('active', true) as never,
+			orderBy: [
+				{
+					expression: ref('name') as never,
+					compareOptions: { direction: 'desc', nulls: 'last' },
+				},
+				{
+					expression: ref('id') as never,
+					compareOptions: { direction: 'asc', nulls: 'last' },
+				},
+			] as never,
 			limit: 10,
 			offset: 5,
 		});
 
 		expect(state.queries.length).toBe(2);
-		expect(state.queries[0]?.sql).toContain('SELECT id, name FROM');
-		expect(state.queries[0]?.sql).toContain('WHERE $where');
+		expect(state.queries[0]?.sql).toContain('SELECT * FROM');
+		expect(state.queries[0]?.sql).not.toContain('WHERE');
+		expect(state.queries[1]?.sql).toContain('WHERE (active = $p0)');
 		expect(state.queries[1]?.sql).toContain('ORDER BY name DESC, id ASC');
-		expect(state.queries[1]?.sql).toContain('LIMIT $limit');
-		expect(state.queries[1]?.sql).toContain('START $offset');
+		expect(state.queries[1]?.sql).toContain('LIMIT $p1');
+		expect(state.queries[1]?.sql).toContain('START $p2');
+		expect(state.queries[1]?.params.p0).toBe(true);
+		expect(state.queries[1]?.params.p1).toBe(10);
+		expect(state.queries[1]?.params.p2).toBe(5);
 	});
 
 	it('creates with db.create when id is missing and with db.insert when id exists', async () => {
@@ -222,7 +239,6 @@ describe('manageTable', () => {
 			[];
 		const table = manageTable<Product>(db as never, false, {
 			name: 'products',
-			where: eq('active', true),
 		});
 
 		const cleanup = table.subscribe((evt) => {
@@ -230,7 +246,7 @@ describe('manageTable', () => {
 		});
 
 		await Promise.resolve();
-		expect(state.liveWhere.length).toBe(1);
+		expect(state.liveCalls).toBe(1);
 		expect(typeof state.liveSubscriber).toBe('function');
 
 		state.liveSubscriber?.({
@@ -270,7 +286,49 @@ describe('manageTable', () => {
 		await Promise.resolve();
 		cleanup();
 
-		expect(state.liveWhere.length).toBe(0);
+		expect(state.liveCalls).toBe(0);
 		expect(state.liveKillCount).toBe(0);
+	});
+
+	it('maps edge relation from/to paths to in/out in where and order by clauses', async () => {
+		const { db, state, eqExpr, ref } = createDbMock();
+		const table = manageTable<Product>(db as never, false, {
+			name: 'todo_links',
+			relation: true,
+		});
+
+		await table.loadSubset({
+			where: eqExpr('from', 'todos:1') as never,
+			orderBy: [
+				{
+					expression: ref('to') as never,
+					compareOptions: { direction: 'asc', nulls: 'last' },
+				},
+			] as never,
+		});
+
+		expect(state.queries[0]?.sql).toContain('WHERE (in = $p0)');
+		expect(state.queries[0]?.sql).toContain('ORDER BY out ASC');
+		expect(state.queries[0]?.params.p0).toBe('todos:1');
+	});
+
+	it('translates join-driven in filters in loadSubset where expression', async () => {
+		const { db, state, eqExpr, inExpr, andExpr } = createDbMock();
+		const table = manageTable<Product>(db as never, false, {
+			name: 'todos',
+		});
+
+		await table.loadSubset({
+			where: andExpr(
+				eqExpr('status', 'active'),
+				inExpr('project', [123, 456]),
+			) as never,
+		});
+
+		expect(state.queries[0]?.sql).toContain(
+			'WHERE ((status = $p0) AND (project IN $p1))',
+		);
+		expect(state.queries[0]?.params.p0).toBe('active');
+		expect(state.queries[0]?.params.p1).toEqual([123, 456]);
 	});
 });

@@ -1,6 +1,7 @@
-import { surrealCollectionOptions, type SurrealSubset } from '../dist';
+import { surrealCollectionOptions } from '../dist';
 
-import { eq, Surreal } from 'surrealdb';
+import { eq } from '@tanstack/db';
+import { Surreal } from 'surrealdb';
 
 import { createCollection } from '@tanstack/db';
 import { QueryClient } from '@tanstack/react-query'; // can also be '@tanstack/svelte-query' etc.
@@ -10,36 +11,27 @@ const db = new Surreal();
 const queryClient = new QueryClient();
 
 type Product = {
-	id: string,
-	name: string,
-	price: number,
-	category?: string,
-}
-
-// const queryClient = new QueryClient();
-
-// Subsets [Optional]
-const subset: SurrealSubset = {
-	where: eq('category', 'books'),
-	orderBy: 'created_at DESC',
-	limit: 25,
-	offset: 50,
+	id: string;
+	name: string;
+	price: number;
+	category?: string;
 };
 
 const productsCollection = createCollection(
 	surrealCollectionOptions<Product>({
 		db,
-		queryKey: ['products', subset],
+		queryKey: ['products'],
 		queryClient,
 		syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' - defaults to 'eager'
-		table: {
-			name: 'products',
-			fields: ['name', 'price'], // [Optional] Defaults to SELECT *
-		},
-	})
+		table: { name: 'products' },
+	}),
 );
 
-const products = useLiveQuery((query) => query.from({ products: productsCollection }));
+const products = useLiveQuery((query) =>
+	query
+		.from({ products: productsCollection })
+		.where(({ products }) => eq(products.category, 'books')),
+);
 
 productsCollection.insert({
 	// id field is optional

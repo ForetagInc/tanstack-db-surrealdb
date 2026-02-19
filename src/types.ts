@@ -1,5 +1,6 @@
+import type { LoadSubsetOptions } from '@tanstack/db';
 import type { QueryClient } from '@tanstack/query-core';
-import type { ExprLike, RecordId, Surreal } from 'surrealdb';
+import type { RecordId, Surreal } from 'surrealdb';
 
 export type WithId<T> = T & { id: string | RecordId };
 
@@ -10,28 +11,19 @@ export type SyncedTable<T> = WithId<
 	}
 >;
 
-export type SurrealField<T> = Extract<keyof T, string> | (string & {});
-export type FieldList<T> = '*' | ReadonlyArray<SurrealField<T>>;
+export type SurrealSubset = LoadSubsetOptions;
 
-export type SurrealSubset = {
-	where?: ExprLike;
-	orderBy?: string | readonly string[];
-	limit?: number;
-	offset?: number;
-};
-
-export type TableOptions<T> = {
+export type TableOptions = {
 	name: string;
-	fields?: FieldList<T>;
-	where?: ExprLike; // base where applied always
+	relation?: boolean;
 };
 
 export type SyncMode = 'eager' | 'on-demand';
 
-export type SurrealCollectionConfig<T extends { id: string | RecordId }> = {
+export type SurrealCollectionConfig = {
 	id?: string;
 	db: Surreal;
-	table: TableOptions<T>;
+	table: TableOptions;
 
 	syncMode?: SyncMode;
 

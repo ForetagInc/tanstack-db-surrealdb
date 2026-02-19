@@ -1,7 +1,5 @@
+import { parseOrderByExpression, parseWhereExpression } from '@tanstack/db';
 import {
-	and,
-	type ExprLike,
-	eq,
 	Features,
 	type LiveMessage,
 	type LiveSubscription,
@@ -10,29 +8,14 @@ import {
 	Table,
 } from 'surrealdb';
 import { toRecordId } from './id';
-import type {
-	FieldList,
-	SurrealField,
-	SurrealSubset,
-	TableOptions,
-} from './types';
-
-const normalizeFields = <T>(
-	raw: FieldList<T> | undefined,
-): ReadonlyArray<SurrealField<T>> => {
-	if (!raw || raw === '*') return ['*' as SurrealField<T>];
-	return raw;
-};
-
-const joinOrderBy = (
-	o: string | readonly string[] | undefined,
-): string | undefined => {
-	if (!o) return undefined;
-	return typeof o === 'string' ? o : o.join(', ');
-};
+import type { SurrealSubset, TableOptions } from './types';
 
 type QueryResult<T> = T[] | null;
 type RowResult<T> = T | T[] | null;
+type FieldPath = Array<string | number>;
+type SqlFragment = { sql: string };
+
+const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const firstRow = <T>(res: RowResult<T>): T | undefined => {
 	if (!res) return undefined;
@@ -40,54 +23,207 @@ const firstRow = <T>(res: RowResult<T>): T | undefined => {
 	return res;
 };
 
+const toFieldPath = (value: unknown): FieldPath => {
+	if (!Array.isArray(value)) {
+		throw new Error('Expected a field path array in where expression.');
+	}
+	return value as FieldPath;
+};
+
+const quoteIdentifier = (segment: string): string => {
+	if (IDENTIFIER_RE.test(segment)) return segment;
+	return `\`${segment.replaceAll('`', '\\`')}\``;
+};
+
+const formatFieldPath = (path: FieldPath): string => {
+	let out = '';
+	for (const segment of path) {
+		if (typeof segment === 'number') {
+			out += `[${segment}]`;
+			continue;
+		}
+		const next = quoteIdentifier(segment);
+		out = out ? `${out}.${next}` : next;
+	}
+	return out;
+};
+
+const isReferencePathCandidate = (value: unknown): value is FieldPath =>
+	Array.isArray(value) &&
+	value.length > 0 &&
+	typeof value[0] === 'string' &&
+	value.every(
+		(segment) => typeof segment === 'string' || typeof segment === 'number',
+	);
+
+const mapRelationPath = (path: FieldPath, relation?: boolean): FieldPath => {
+	if (!relation) return path;
+	if (path[0] === 'from') return ['in', ...path.slice(1)];
+	if (path[0] === 'to') return ['out', ...path.slice(1)];
+	return path;
+};
+
+const toSqlFragment = (value: unknown): SqlFragment => {
+	if (
+		typeof value === 'object' &&
+		value !== null &&
+		'sql' in value &&
+		typeof (value as { sql: unknown }).sql === 'string'
+	) {
+		return value as SqlFragment;
+	}
+	throw new Error('Unsupported where expression node.');
+};
+
+const joinLogical = (op: 'AND' | 'OR', args: Array<unknown>): SqlFragment => {
+	const parts = args.map(toSqlFragment).map((frag) => frag.sql);
+	if (parts.length === 0) {
+		return { sql: op === 'AND' ? 'true' : 'false' };
+	}
+	if (parts.length === 1) return { sql: parts[0] };
+	return {
+		sql: parts.map((part) => `(${part})`).join(` ${op} `),
+	};
+};
+
+const buildSubsetQuery = (
+	table: TableOptions,
+	useLoro: boolean,
+	subset?: SurrealSubset,
+): { sql: string; params: Record<string, unknown> } => {
+	let paramIdx = 0;
+	const params: Record<string, unknown> = { table: table.name };
+	const nextParam = (value: unknown): string => {
+		const key = `p${paramIdx++}`;
+		params[key] = value;
+		return `$${key}`;
+	};
+	const comparison = (
+		fieldPath: unknown,
+		op: '=' | '!=' | '>' | '>=' | '<' | '<=' | 'LIKE',
+		value: unknown,
+	): SqlFragment => {
+		const field = formatFieldPath(
+			mapRelationPath(toFieldPath(fieldPath), table.relation),
+		);
+		if (isReferencePathCandidate(value)) {
+			// WHERE subset filters should use concrete values, not ref-to-ref comparisons.
+			throw new Error(
+				'Field-to-field comparisons are not supported in loadSubset where translation.',
+			);
+		}
+		return { sql: `${field} ${op} ${nextParam(value)}` };
+	};
+	const whereSqlFrom = (
+		expr: NonNullable<SurrealSubset['where']>,
+	): string => {
+		const fragment = parseWhereExpression<SqlFragment>(expr, {
+			handlers: {
+				and: (...args) => joinLogical('AND', args),
+				or: (...args) => joinLogical('OR', args),
+				not: (arg) => ({ sql: `NOT (${toSqlFragment(arg).sql})` }),
+				eq: (field, value) => comparison(field, '=', value),
+				gt: (field, value) => comparison(field, '>', value),
+				gte: (field, value) => comparison(field, '>=', value),
+				lt: (field, value) => comparison(field, '<', value),
+				lte: (field, value) => comparison(field, '<=', value),
+				like: (field, value) => comparison(field, 'LIKE', value),
+				ilike: (field, value) => {
+					const f = formatFieldPath(
+						mapRelationPath(toFieldPath(field), table.relation),
+					);
+					const p = nextParam(value);
+					return {
+						sql: `string::lower(${f}) LIKE string::lower(${p})`,
+					};
+				},
+				in: (field, value) => {
+					const f = formatFieldPath(
+						mapRelationPath(toFieldPath(field), table.relation),
+					);
+					if (Array.isArray(value) && value.length === 0) {
+						return { sql: 'false' };
+					}
+					return { sql: `${f} IN ${nextParam(value)}` };
+				},
+				isNull: (field) => ({
+					sql: `${formatFieldPath(
+						mapRelationPath(toFieldPath(field), table.relation),
+					)} IS NULL`,
+				}),
+				isUndefined: (field) => ({
+					sql: `${formatFieldPath(
+						mapRelationPath(toFieldPath(field), table.relation),
+					)} IS NONE`,
+				}),
+			},
+			onUnknownOperator: (op) => {
+				throw new Error(
+					`Unsupported where operator '${op}' for SurrealQL translation.`,
+				);
+			},
+		});
+
+		if (!fragment) return '';
+		return fragment.sql;
+	};
+
+	const whereParts: string[] = [];
+	if (subset?.where) {
+		const parsed = whereSqlFrom(subset.where);
+		if (parsed) whereParts.push(parsed);
+	}
+	if (subset?.cursor?.whereFrom) {
+		const cursorWhere = whereSqlFrom(subset.cursor.whereFrom);
+		if (cursorWhere) whereParts.push(cursorWhere);
+	}
+	if (useLoro) whereParts.push('sync_deleted = false');
+
+	const whereSql = whereParts.length
+		? ` WHERE ${whereParts.map((part) => `(${part})`).join(' AND ')}`
+		: '';
+
+	const order = parseOrderByExpression(subset?.orderBy);
+	const orderSql = order.length
+		? ` ORDER BY ${order
+				.map(
+					(clause) =>
+						`${formatFieldPath(
+							mapRelationPath(clause.field, table.relation),
+						)} ${clause.direction.toUpperCase()}`,
+				)
+				.join(', ')}`
+		: '';
+	const limitSql =
+		typeof subset?.limit === 'number'
+			? ` LIMIT ${nextParam(subset.limit)}`
+			: '';
+	const offsetSql =
+		typeof subset?.offset === 'number'
+			? ` START ${nextParam(subset.offset)}`
+			: '';
+
+	return {
+		sql: `SELECT * FROM type::table($table)${whereSql}${orderSql}${limitSql}${offsetSql};`,
+		params,
+	};
+};
+
 export function manageTable<T extends { id: string | RecordId }>(
 	db: Surreal,
 	useLoro: boolean,
-	{ name, ...args }: TableOptions<T>,
+	config: TableOptions,
 ) {
-	const fields = normalizeFields<T>(args.fields);
-	const selectFields = fields.join(', ');
+	const { name } = config;
 	const table = new Table(name);
-	const aliveWhere = useLoro ? eq('sync_deleted', false) : undefined;
-	const baseWhere = aliveWhere
-		? (args.where ? and(args.where, aliveWhere) : aliveWhere)
-		: args.where;
-	const listAllSql = `SELECT ${selectFields} FROM type::table($table)${
-		baseWhere ? ' WHERE $where' : ''
-	};`;
-
-	const getBaseWhere = (): ExprLike | undefined => baseWhere;
 
 	const listAll = async (): Promise<T[]> => {
-		const where = getBaseWhere();
-		const [res] = await db.query<[QueryResult<T>]>(listAllSql, {
-			table: name,
-			where,
-		});
-		return res ?? [];
+		return loadSubset();
 	};
 
 	const loadSubset = async (subset?: SurrealSubset): Promise<T[]> => {
-		const b = getBaseWhere();
-		const w = subset?.where;
-		const where = b && w ? and(b, w) : (b ?? w);
-
-		const whereSql = where ? ' WHERE $where' : '';
-		const order = joinOrderBy(subset?.orderBy);
-		const orderSql = order ? ` ORDER BY ${order}` : '';
-		const limitSql =
-			typeof subset?.limit === 'number' ? ' LIMIT $limit' : '';
-		const startSql =
-			typeof subset?.offset === 'number' ? ' START $offset' : '';
-
-		const sql = `SELECT ${selectFields} FROM type::table($table)${whereSql}${orderSql}${limitSql}${startSql};`;
-
-		const [res] = await db.query<[QueryResult<T>]>(sql, {
-			table: name,
-			where,
-			limit: subset?.limit,
-			offset: subset?.offset,
-		});
+		const { sql, params } = buildSubsetQuery(config, useLoro, subset);
+		const [res] = await db.query<[QueryResult<T>]>(sql, params);
 
 		return res ?? [];
 	};
@@ -155,7 +291,7 @@ export function manageTable<T extends { id: string | RecordId }>(
 
 		const start = async () => {
 			if (!db.isFeatureSupported(Features.LiveQueries)) return;
-			live = await db.live(table).where(args.where);
+			live = await db.live(table);
 			live.subscribe(on);
 		};
 

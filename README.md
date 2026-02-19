@@ -30,16 +30,18 @@ await db.use({ ns: 'ns', db: 'db' });
 export const queryClient = new QueryClient();
 
 // collections/products.ts
-import { eq } from 'surrealdb';
+import { eq } from '@tanstack/db';
 import { db, queryClient } from '../db';
 import { createCollection } from '@tanstack/db';
 import { surrealCollectionOptions } from '@foretag/tanstack-db-surrealdb';
+import { useLiveQuery } from '@tanstack/react-db';
 
 // Collection Type, could also be generated
 type Product = {
 	id: string;
 	name: string;
 	price: number;
+	store?: string;
 };
 
 export const products = createCollection(
@@ -48,12 +50,14 @@ export const products = createCollection(
 		queryKey: ['products'],
 		queryClient,
 		useLoro: true, // Optional if you need CRDTs
-		table: {
-			name: 'products',
-			where: eq('store', '123'),
-			fields: ['name', 'price'] // Optional or defaults to *
-		},
+		table: { name: 'products' },
 	}),
+)
+
+const data = useLiveQuery((q) =>
+	q
+		.from({ products })
+		.where(({ products }) => eq(products.store, '123'))
 )
 ```
 

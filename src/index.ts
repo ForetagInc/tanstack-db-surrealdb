@@ -22,11 +22,7 @@ import {
 	toRecordIdString,
 } from './id';
 import { manageTable } from './table';
-import type {
-	SurrealCollectionConfig,
-	SurrealSubset,
-	SyncedTable,
-} from './types';
+import type { SurrealCollectionConfig, SyncedTable } from './types';
 
 type Cleanup = () => void;
 
@@ -46,7 +42,6 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 	};
 
 export { toRecordKeyString } from './id';
-export type { SurrealSubset } from './types';
 
 declare module '@tanstack/db' {
 	interface Collection<
@@ -172,7 +167,7 @@ export function surrealCollectionOptions<
 	queryKey,
 	syncMode = 'eager',
 	...config
-}: SurrealCollectionConfig<T>): CollectionConfig<
+}: SurrealCollectionConfig): CollectionConfig<
 	T,
 	string,
 	StandardSchemaV1<MutationInput<T>, T>,
@@ -191,8 +186,9 @@ export function surrealCollectionOptions<
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
 		toRecordId(config.table.name, rid);
-	const withNormalizedId = (row: T): T =>
-		({ ...row, id: keyOf(row.id) }) as T;
+	const withRecordId = (row: T): T =>
+		({ ...row, id: normalizeMutationId(row.id) }) as T;
+	const toLoroStoredRow = (row: T): T => ({ ...row, id: keyOf(row.id) }) as T;
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
 	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
@@ -202,7 +198,7 @@ export function surrealCollectionOptions<
 
 	const loroPut = (row: T, commit = true) => {
 		if (!loroMap) return;
-		loroMap.set(getKey(row), row as unknown);
+		loroMap.set(getKey(row), toLoroStoredRow(row) as unknown);
 		if (commit) commitLoro();
 	};
 
@@ -228,7 +224,7 @@ export function surrealCollectionOptions<
 			}
 
 			if ((l.sync_deleted ?? false) === true) continue;
-			out.push(l);
+			out.push(withRecordId(l));
 		}
 
 		return out;
@@ -247,7 +243,7 @@ export function surrealCollectionOptions<
 			try {
 				const subset =
 					syncMode === 'on-demand'
-						? (meta.surrealSubset as SurrealSubset | undefined)
+						? meta?.loadSubsetOptions
 						: undefined;
 
 				const rows =
@@ -256,7 +252,7 @@ export function surrealCollectionOptions<
 						: await table.loadSubset(subset);
 
 				return mergeLocalOverServer(rows).map((row) =>
-					withNormalizedId(row),
+					withRecordId(row),
 				);
 			} catch (e) {
 				onError?.(e);
@@ -281,7 +277,7 @@ export function surrealCollectionOptions<
 							sync_deleted: false,
 						} as T)
 					: baseRow;
-				const normalizedRow = withNormalizedId(row);
+				const normalizedRow = withRecordId(row);
 
 				if (useLoro) {
 					loroPut(normalizedRow, false);
@@ -295,7 +291,7 @@ export function surrealCollectionOptions<
 					>;
 					const persisted = await table.create(payload as Partial<T>);
 					const resolvedRow = persisted?.id
-						? withNormalizedId({
+						? withRecordId({
 								...normalizedRow,
 								...persisted,
 								id: persisted.id,
@@ -311,7 +307,7 @@ export function surrealCollectionOptions<
 					const persisted = await table.create(normalizedRow);
 					resultRows.push(
 						persisted
-							? withNormalizedId({
+							? withRecordId({
 									...normalizedRow,
 									...persisted,
 								} as T)
@@ -341,13 +337,13 @@ export function surrealCollectionOptions<
 				) as Partial<T>;
 				const baseRow = {
 					...normalizedModified,
-					id: keyOf(idKey),
+					id: normalizeMutationId(idKey),
 				} as T;
 
 				const row = useLoro
 					? ({ ...baseRow, updated_at: now } as T)
 					: baseRow;
-				const normalizedRow = withNormalizedId(row);
+				const normalizedRow = withRecordId(row);
 
 				if (useLoro) {
 					loroPut(normalizedRow, false);

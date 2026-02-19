@@ -1,8 +1,8 @@
 import { surrealCollectionOptions } from '../dist';
 
-import { RecordId, Surreal, eq, or } from 'surrealdb';
+import { RecordId, Surreal } from 'surrealdb';
 
-import { createCollection } from '@tanstack/db';
+import { createCollection, eq, or } from '@tanstack/db';
 import { useLiveQuery } from '@tanstack/react-db';
 import { QueryClient } from '@tanstack/react-query';
 
@@ -10,54 +10,35 @@ const db = new Surreal();
 const queryClient = new QueryClient();
 
 type Product = {
-	id: RecordId<'product'>,
-	name: string,
-	price: number
-}
+	id: RecordId<'product'>;
+	name: string;
+	price: number;
+};
 
 const productsCollection = createCollection(
 	surrealCollectionOptions<Product>({
 		db,
 		queryKey: ['products'],
 		queryClient,
-		table: {
-			name: 'products',
-			fields: ['name', 'price'], // Optional, or Default to SELECT *
-		}
-	})
+		table: { name: 'products' },
+	}),
 );
 
-const productsCollectionFilter = createCollection(
-	surrealCollectionOptions<Product>({
-		db,
-		queryKey: ['products', 'filter'],
-		queryClient,
-		table: {
-			name: 'products',
-			fields: ['name', 'price'], // Optional, or Default to SELECT *
-			where: eq('price', 100)
-		}
-	})
+const products = useLiveQuery((query) =>
+	query.from({ products: productsCollection }).select(({ products }) => ({
+		id: products.id,
+	})),
 );
 
-
-const productsCollectionAdvancedFilter = createCollection(
-	surrealCollectionOptions<Product>({
-		db,
-		queryKey: ['products', 'advancedFilter'],
-		queryClient,
-		table: {
-			name: 'products',
-			fields: ['name', 'price'], // Optional, or Default to SELECT *
-			where: or(
-				eq('price', 100),
-				eq('price', 200)
-			)
-		}
-	})
+const filteredProducts = useLiveQuery((query) =>
+	query
+		.from({ products: productsCollection })
+		.where(({ products }) =>
+			or(eq(products.price, 100), eq(products.price, 200)),
+		),
 );
 
-const products = useLiveQuery((query) => query.from({ products: productsCollection }));
+void filteredProducts;
 
 productsCollection.insert({
 	// id field is optional
