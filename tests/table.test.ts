@@ -352,6 +352,30 @@ describe('manageTable', () => {
 		);
 	});
 
+	it('normalizes foreign RecordId-like where values to native RecordId params', async () => {
+		class RecordId2 {
+			constructor(private rid: string) {}
+			toString() {
+				return this.rid;
+			}
+		}
+
+		const { db, state, eqExpr } = createDbMock();
+		const table = manageTable<Product>(db as never, false, {
+			name: 'calendar',
+		});
+
+		await table.loadSubset({
+			where: eqExpr('owner', new RecordId2('profile:456')) as never,
+		});
+
+		expect(state.queries[0]?.sql).toContain('WHERE (owner = $p0)');
+		expect(state.queries[0]?.params.p0 instanceof RecordId).toBe(true);
+		expect((state.queries[0]?.params.p0 as RecordId).toString()).toBe(
+			'profile:⟨456⟩',
+		);
+	});
+
 	it('translates eq(undefined) predicates into IS NONE', async () => {
 		const { db, state, eqExpr } = createDbMock();
 		const table = manageTable<Product>(db as never, false, {

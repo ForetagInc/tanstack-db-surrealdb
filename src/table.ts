@@ -7,7 +7,11 @@ import {
 	type Surreal,
 	Table,
 } from 'surrealdb';
-import { normalizeRecordIdLikeValue, toRecordId } from './id';
+import {
+	normalizeRecordIdLikeValue,
+	toNativeRecordIdLikeValue,
+	toRecordId,
+} from './id';
 import type { SurrealSubset, TableOptions } from './types';
 
 type QueryResult<T> = T[] | null;
@@ -67,6 +71,8 @@ const normalizeFilterValue = (value: unknown): unknown => {
 	if (Array.isArray(value)) {
 		return value.map((item) => normalizeFilterValue(item));
 	}
+	const native = toNativeRecordIdLikeValue(value);
+	if (native !== value) return native;
 	return normalizeRecordIdLikeValue(value);
 };
 

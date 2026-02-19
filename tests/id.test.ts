@@ -74,6 +74,22 @@ describe('id helpers', () => {
 		expect(normalized.owner).toBe(normalized.meta.reviewer);
 	});
 
+	it('reuses foreign RecordId-like identity for equivalent values', () => {
+		class RecordId2 {
+			constructor(private rid: string) {}
+			toString() {
+				return this.rid;
+			}
+		}
+
+		const foreign = new RecordId2('account:foreign');
+		const normalizedForeign = normalizeRecordIdLikeValue(foreign);
+		const native = normalizeRecordIdLikeValue(new RecordId('account', 'foreign'));
+
+		expect(normalizedForeign).toBe(foreign);
+		expect(native).toBe(foreign);
+	});
+
 	it('preserves Date and Surreal DateTime fields while normalizing id-like fields', () => {
 		const jsDate = new Date('2026-01-01T00:00:00.000Z');
 		const surrealDate = new DateTime(new Date('2026-01-02T00:00:00.000Z'));

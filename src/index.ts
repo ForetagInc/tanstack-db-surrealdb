@@ -85,6 +85,29 @@ type QueryWriteUtils = {
 	writeDelete?: (key: string) => void;
 };
 
+const normalizeExpressionLiteralsInPlace = (expr: unknown): void => {
+	if (!expr || typeof expr !== 'object') return;
+	const node = expr as {
+		type?: string;
+		value?: unknown;
+		args?: unknown[];
+	};
+	if (node.type === 'val') {
+		node.value = normalizeRecordIdLikeValueDeep(node.value);
+		return;
+	}
+	if (node.type === 'func' && Array.isArray(node.args)) {
+		for (const arg of node.args) normalizeExpressionLiteralsInPlace(arg);
+	}
+};
+
+const normalizeSubsetLiteralsInPlace = (subset: SurrealSubset | undefined) => {
+	if (!subset) return;
+	normalizeExpressionLiteralsInPlace(subset.where);
+	normalizeExpressionLiteralsInPlace(subset.cursor?.whereFrom);
+	normalizeExpressionLiteralsInPlace(subset.cursor?.whereCurrent);
+};
+
 const createTempRecordId = (tableName: string): RecordId => {
 	const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 	return new RecordId(tableName, `${TEMP_ID_PREFIX}${suffix}`);
@@ -189,6 +212,7 @@ export function surrealCollectionOptions<
 	const resolvedQueryKey =
 		syncMode === 'on-demand'
 			? (opts: SurrealSubset = {}) => {
+					normalizeSubsetLiteralsInPlace(opts);
 					const serialized = serializeSurrealSubsetOptions(opts);
 					return serialized
 						? [...queryKey, serialized]
@@ -267,6 +291,7 @@ export function surrealCollectionOptions<
 					syncMode === 'on-demand'
 						? meta?.loadSubsetOptions
 						: undefined;
+				normalizeSubsetLiteralsInPlace(subset);
 
 				const rows =
 					syncMode === 'eager'
@@ -440,8 +465,21 @@ export function surrealCollectionOptions<
 					if (hasLoadSubset(baseRes)) {
 						// on-demand mode relies on this being present
 						const resObj = baseRes as Record<string, unknown>;
+						const rawLoadSubset = resObj.loadSubset;
+						const loadSubset =
+							typeof rawLoadSubset === 'function'
+								? (opts?: SurrealSubset) => {
+										normalizeSubsetLiteralsInPlace(opts);
+										return (
+											rawLoadSubset as (
+												subset?: SurrealSubset,
+											) => unknown
+										)(opts);
+									}
+								: rawLoadSubset;
 						return {
 							...resObj,
+							loadSubset,
 							cleanup: () => {
 								offLive();
 								baseCleanup();
