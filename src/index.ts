@@ -21,6 +21,7 @@ import {
 	toRecordId,
 	toRecordIdString,
 } from './id';
+import { eqRecordId } from './operators';
 import { serializeSurrealSubsetOptions } from './queryKey';
 import { manageTable } from './table';
 import type {
@@ -47,6 +48,7 @@ type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
 	};
 
 export { toRecordKeyString } from './id';
+export { eqRecordId };
 
 declare module '@tanstack/db' {
 	interface Collection<
