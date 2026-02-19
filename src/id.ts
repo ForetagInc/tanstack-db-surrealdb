@@ -114,6 +114,23 @@ const asCanonicalRecordIdFromObjectShape = (
 		return `${table}:${key}`;
 	}
 
+	// Handle wrapped record-id-like values only when object is effectively { id: ... }.
+	// This avoids treating normal DB rows ({ id, owner, ... }) as a record id.
+	const keys = Object.keys(obj);
+	if (keys.length === 1 && keys[0] === 'id') {
+		const idValue = obj.id;
+		if (typeof idValue === 'string') {
+			const nestedCanonical = toCanonicalRecordIdString(idValue);
+			if (nestedCanonical) return nestedCanonical;
+		}
+		if (idValue && typeof idValue === 'object' && idValue !== value) {
+			return (
+				asCanonicalRecordIdFromObjectShape(idValue) ??
+				asCanonicalRecordIdFromObjectString(idValue)
+			);
+		}
+	}
+
 	return undefined;
 };
 
@@ -133,9 +150,8 @@ const isForeignRecordIdObject = (value: unknown): boolean => {
 	if (!value || typeof value !== 'object' || value instanceof RecordId) {
 		return false;
 	}
-	const ctorName = (value as { constructor?: { name?: unknown } }).constructor
-		?.name;
-	return typeof ctorName === 'string' && /recordid/i.test(ctorName);
+	const proto = Object.getPrototypeOf(value);
+	return proto !== null && proto !== Object.prototype;
 };
 
 export const asCanonicalRecordIdString = (
@@ -171,7 +187,10 @@ export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
 		if (!canonical) return value;
 
 		if (isForeignRecordIdObject(value)) {
-			return internRecordIdLike(canonical, () => value);
+			// Prefer caller-owned RecordId-like instances as canonical identity so
+			// TanStack eq() (reference comparison for objects) can match naturally.
+			recordIdInternPool.set(canonical, value);
+			return value;
 		}
 
 		return internRecordIdLike(canonical, () =>

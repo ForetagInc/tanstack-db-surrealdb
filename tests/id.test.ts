@@ -75,19 +75,35 @@ describe('id helpers', () => {
 	});
 
 	it('reuses foreign RecordId-like identity for equivalent values', () => {
-		class RecordId2 {
+		class ForeignRid {
 			constructor(private rid: string) {}
 			toString() {
 				return this.rid;
 			}
 		}
 
-		const foreign = new RecordId2('account:foreign');
+		const foreign = new ForeignRid('account:foreign');
 		const normalizedForeign = normalizeRecordIdLikeValue(foreign);
 		const native = normalizeRecordIdLikeValue(new RecordId('account', 'foreign'));
 
 		expect(normalizedForeign).toBe(foreign);
 		expect(native).toBe(foreign);
+	});
+
+	it('normalizes wrapped object ids like { id: RecordIdLike }', () => {
+		class ForeignRid {
+			constructor(private rid: string) {}
+			toString() {
+				return this.rid;
+			}
+		}
+
+		const wrapped = {
+			id: new ForeignRid('account:wrapped'),
+		};
+		const out = normalizeRecordIdLikeValue(wrapped);
+		expect(out instanceof RecordId).toBe(true);
+		expect(String(out)).toBe('account:wrapped');
 	});
 
 	it('preserves Date and Surreal DateTime fields while normalizing id-like fields', () => {

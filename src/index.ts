@@ -85,6 +85,32 @@ type QueryWriteUtils = {
 	writeDelete?: (key: string) => void;
 };
 
+const SUBSCRIBE_PATCHED = Symbol('surrealdbSubscribePatched');
+
+type SubscribeChangesFn = (
+	callback: (changes: Array<unknown>) => void,
+	options?: { whereExpression?: unknown } & Record<string, unknown>,
+) => unknown;
+
+const patchSubscribeChangesForRecordIds = (collection: unknown): void => {
+	if (!collection || typeof collection !== 'object') return;
+	const target = collection as {
+		subscribeChanges?: SubscribeChangesFn;
+		[SUBSCRIBE_PATCHED]?: boolean;
+	};
+	if (target[SUBSCRIBE_PATCHED]) return;
+	if (typeof target.subscribeChanges !== 'function') return;
+
+	const original = target.subscribeChanges.bind(target);
+	target.subscribeChanges = (callback, options) => {
+		if (options?.whereExpression) {
+			normalizeExpressionLiteralsInPlace(options.whereExpression);
+		}
+		return original(callback, options);
+	};
+	target[SUBSCRIBE_PATCHED] = true;
+};
+
 const normalizeExpressionLiteralsInPlace = (expr: unknown): void => {
 	if (!expr || typeof expr !== 'object') return;
 	const node = expr as {
@@ -436,6 +462,9 @@ export function surrealCollectionOptions<
 	const sync = baseSync
 		? {
 				sync: (ctx: Parameters<NonNullable<typeof baseSync>>[0]) => {
+					patchSubscribeChangesForRecordIds(
+						ctx.collection as unknown,
+					);
 					// IMPORTANT: call baseSync exactly once
 					const baseRes = baseSync(ctx) as SyncReturn;
 					const baseCleanup = toCleanup(baseRes);
