@@ -1,6 +1,6 @@
 {
 	"name": "@foretag/tanstack-db-surrealdb",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"license": "NOLICENSE",
 	"exports": "./src/index.ts"
 }

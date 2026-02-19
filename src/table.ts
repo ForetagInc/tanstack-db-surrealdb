@@ -7,7 +7,7 @@ import {
 	type Surreal,
 	Table,
 } from 'surrealdb';
-import { toRecordId } from './id';
+import { normalizeRecordIdLikeValue, toRecordId } from './id';
 import type { SurrealSubset, TableOptions } from './types';
 
 type QueryResult<T> = T[] | null;
@@ -63,6 +63,13 @@ const mapRelationPath = (path: FieldPath, relation?: boolean): FieldPath => {
 	return path;
 };
 
+const normalizeFilterValue = (value: unknown): unknown => {
+	if (Array.isArray(value)) {
+		return value.map((item) => normalizeFilterValue(item));
+	}
+	return normalizeRecordIdLikeValue(value);
+};
+
 const toSqlFragment = (value: unknown): SqlFragment => {
 	if (
 		typeof value === 'object' &&
@@ -106,13 +113,24 @@ const buildSubsetQuery = (
 		const field = formatFieldPath(
 			mapRelationPath(toFieldPath(fieldPath), table.relation),
 		);
-		if (isReferencePathCandidate(value)) {
-			// WHERE subset filters should use concrete values, not ref-to-ref comparisons.
+
+		if (value === undefined) {
+			if (op === '=') return { sql: `${field} IS NONE` };
+			if (op === '!=') return { sql: `${field} IS NOT NONE` };
 			throw new Error(
-				'Field-to-field comparisons are not supported in loadSubset where translation.',
+				`Cannot compare field '${field}' with undefined using '${op}'.`,
 			);
 		}
-		return { sql: `${field} ${op} ${nextParam(value)}` };
+
+		if (isReferencePathCandidate(value)) {
+			// Subset predicates should compare against concrete values.
+			throw new Error(
+				'Got a field reference on the right side of a where comparison. Pass a concrete value (string/RecordId), not a reactive proxy/path.',
+			);
+		}
+		return {
+			sql: `${field} ${op} ${nextParam(normalizeFilterValue(value))}`,
+		};
 	};
 	const whereSqlFrom = (
 		expr: NonNullable<SurrealSubset['where']>,
@@ -132,7 +150,7 @@ const buildSubsetQuery = (
 					const f = formatFieldPath(
 						mapRelationPath(toFieldPath(field), table.relation),
 					);
-					const p = nextParam(value);
+					const p = nextParam(normalizeFilterValue(value));
 					return {
 						sql: `string::lower(${f}) LIKE string::lower(${p})`,
 					};
@@ -144,7 +162,9 @@ const buildSubsetQuery = (
 					if (Array.isArray(value) && value.length === 0) {
 						return { sql: 'false' };
 					}
-					return { sql: `${f} IN ${nextParam(value)}` };
+					return {
+						sql: `${f} IN ${nextParam(normalizeFilterValue(value))}`,
+					};
 				},
 				isNull: (field) => ({
 					sql: `${formatFieldPath(

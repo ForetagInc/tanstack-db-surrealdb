@@ -66,8 +66,47 @@ const parseRecordIdString = (value: string): RecordId | undefined => {
 	return new RecordId(table, key);
 };
 
+const asRecordIdFromObjectShape = (value: unknown): RecordId | undefined => {
+	if (!value || typeof value !== 'object') return undefined;
+	const obj = value as Record<string, unknown>;
+
+	const table =
+		typeof obj.table === 'string'
+			? obj.table
+			: typeof obj.tb === 'string'
+				? obj.tb
+				: undefined;
+	const key =
+		typeof obj.id === 'string' || typeof obj.id === 'number'
+			? String(obj.id)
+			: undefined;
+
+	if (table && key && looksLikeTableName(table)) {
+		return new RecordId(table, key);
+	}
+
+	return undefined;
+};
+
+const asRecordIdFromObjectString = (value: unknown): RecordId | undefined => {
+	if (!value || typeof value !== 'object') return undefined;
+	const obj = value as { toString?: () => unknown };
+	if (typeof obj.toString !== 'function') return undefined;
+
+	const raw = String(obj.toString());
+	if (!raw || raw === '[object Object]') return undefined;
+	return parseRecordIdString(raw);
+};
+
 export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
 	if (value instanceof RecordId) return value;
+	if (typeof value === 'object' && value !== null) {
+		return (
+			asRecordIdFromObjectShape(value) ??
+			asRecordIdFromObjectString(value) ??
+			value
+		);
+	}
 	if (typeof value !== 'string') return value;
 
 	const trimmed = value.trim();

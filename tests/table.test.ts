@@ -309,7 +309,10 @@ describe('manageTable', () => {
 
 		expect(state.queries[0]?.sql).toContain('WHERE (in = $p0)');
 		expect(state.queries[0]?.sql).toContain('ORDER BY out ASC');
-		expect(state.queries[0]?.params.p0).toBe('todos:1');
+		expect(state.queries[0]?.params.p0 instanceof RecordId).toBe(true);
+		expect((state.queries[0]?.params.p0 as RecordId).toString()).toBe(
+			'todos:⟨1⟩',
+		);
 	});
 
 	it('translates join-driven in filters in loadSubset where expression', async () => {
@@ -330,5 +333,36 @@ describe('manageTable', () => {
 		);
 		expect(state.queries[0]?.params.p0).toBe('active');
 		expect(state.queries[0]?.params.p1).toEqual([123, 456]);
+	});
+
+	it('normalizes record-id-like where values to RecordId params', async () => {
+		const { db, state, eqExpr } = createDbMock();
+		const table = manageTable<Product>(db as never, false, {
+			name: 'calendar',
+		});
+
+		await table.loadSubset({
+			where: eqExpr('owner', 'profile:123') as never,
+		});
+
+		expect(state.queries[0]?.sql).toContain('WHERE (owner = $p0)');
+		expect(state.queries[0]?.params.p0 instanceof RecordId).toBe(true);
+		expect((state.queries[0]?.params.p0 as RecordId).toString()).toBe(
+			'profile:⟨123⟩',
+		);
+	});
+
+	it('translates eq(undefined) predicates into IS NONE', async () => {
+		const { db, state, eqExpr } = createDbMock();
+		const table = manageTable<Product>(db as never, false, {
+			name: 'calendar',
+		});
+
+		await table.loadSubset({
+			where: eqExpr('owner', undefined) as never,
+		});
+
+		expect(state.queries[0]?.sql).toContain('WHERE (owner IS NONE)');
+		expect(state.queries[0]?.params).toEqual({ table: 'calendar' });
 	});
 });

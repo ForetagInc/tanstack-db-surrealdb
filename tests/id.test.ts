@@ -26,6 +26,21 @@ describe('id helpers', () => {
 		expect(plain).toBe('hello');
 	});
 
+	it('normalizes record-id-like objects by shape or toString', () => {
+		const byShape = normalizeRecordIdLikeValue({
+			table: 'profile',
+			id: 'abc',
+		});
+		expect(byShape instanceof RecordId).toBe(true);
+		expect(toRecordIdString(byShape as RecordId)).toBe('profile:abc');
+
+		const byString = normalizeRecordIdLikeValue({
+			toString: () => 'profile:def',
+		});
+		expect(byString instanceof RecordId).toBe(true);
+		expect(toRecordIdString(byString as RecordId)).toBe('profile:def');
+	});
+
 	it('normalizes record-id-like fields in an object', () => {
 		const out = normalizeRecordIdLikeFields({
 			id: 'products:1',
