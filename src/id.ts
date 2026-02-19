@@ -1,5 +1,7 @@
 import { RecordId } from 'surrealdb';
 
+const recordIdInternPool = new Map<string, RecordId>();
+
 export const stripOuterQuotes = (value: string): string => {
 	const trimmed = value.trim();
 	const isSingleQuoted =
@@ -63,7 +65,13 @@ const parseRecordIdString = (value: string): RecordId | undefined => {
 	const key = normalized.slice(idx + 1).trim();
 	if (!table || !key || !looksLikeTableName(table)) return undefined;
 
-	return new RecordId(table, key);
+	const canonical = `${table}:${key}`;
+	const cached = recordIdInternPool.get(canonical);
+	if (cached) return cached;
+
+	const created = new RecordId(table, key);
+	recordIdInternPool.set(canonical, created);
+	return created;
 };
 
 const asRecordIdFromObjectShape = (value: unknown): RecordId | undefined => {
@@ -99,7 +107,13 @@ const asRecordIdFromObjectString = (value: unknown): RecordId | undefined => {
 };
 
 export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
-	if (value instanceof RecordId) return value;
+	if (value instanceof RecordId) {
+		const canonical = toRecordIdString(value);
+		const cached = recordIdInternPool.get(canonical);
+		if (cached) return cached;
+		recordIdInternPool.set(canonical, value);
+		return value;
+	}
 	if (typeof value === 'object' && value !== null) {
 		return (
 			asRecordIdFromObjectShape(value) ??
@@ -121,6 +135,31 @@ export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
 	return value;
 };
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' &&
+	value !== null &&
+	Object.getPrototypeOf(value) === Object.prototype;
+
+export const normalizeRecordIdLikeValueDeep = <T>(value: T): T => {
+	const normalized = normalizeRecordIdLikeValue(value);
+
+	if (Array.isArray(normalized)) {
+		return normalized.map((item) =>
+			normalizeRecordIdLikeValueDeep(item),
+		) as T;
+	}
+
+	if (isPlainObject(normalized)) {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(normalized)) {
+			out[k] = normalizeRecordIdLikeValueDeep(v);
+		}
+		return out as T;
+	}
+
+	return normalized as T;
+};
+
 export const normalizeRecordIdLikeFields = <T extends Record<string, unknown>>(
 	data: T,
 ): T => {
@@ -135,12 +174,14 @@ export const toRecordId = (
 	tableName: string,
 	id: RecordId | string,
 ): RecordId => {
-	if (id instanceof RecordId) return id;
+	if (id instanceof RecordId) {
+		return normalizeRecordIdLikeValue(id) as RecordId;
+	}
 
 	const normalized = toRecordIdString(id);
 	const prefixed = `${tableName}:`;
 	const key = normalized.startsWith(prefixed)
 		? normalized.slice(prefixed.length)
 		: normalized;
-	return new RecordId(tableName, key);
+	return normalizeRecordIdLikeValue(new RecordId(tableName, key)) as RecordId;
 };

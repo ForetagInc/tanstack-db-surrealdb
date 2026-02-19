@@ -3,6 +3,7 @@ import { DateTime, RecordId } from 'surrealdb';
 
 import {
 	normalizeRecordIdLikeFields,
+	normalizeRecordIdLikeValueDeep,
 	normalizeRecordIdLikeValue,
 	stripOuterQuotes,
 	toRecordKeyString,
@@ -48,6 +49,29 @@ describe('id helpers', () => {
 		});
 		expect(out.id instanceof RecordId).toBe(true);
 		expect(out.name).toBe('desk');
+	});
+
+	it('interns equivalent RecordId instances to a shared reference', () => {
+		const a = new RecordId('account', 'same');
+		const b = new RecordId('account', 'same');
+		const normalizedA = normalizeRecordIdLikeValue(a) as RecordId;
+		const normalizedB = normalizeRecordIdLikeValue(b) as RecordId;
+		expect(normalizedA).toBe(normalizedB);
+	});
+
+	it('deep-normalizes nested record-id-like values', () => {
+		const out = normalizeRecordIdLikeValueDeep({
+			owner: 'account:abc',
+			meta: { reviewer: new RecordId('account', 'abc') },
+		});
+		const normalized = out as {
+			owner: unknown;
+			meta: { reviewer: unknown };
+		};
+
+		expect(normalized.owner instanceof RecordId).toBe(true);
+		expect(normalized.meta.reviewer instanceof RecordId).toBe(true);
+		expect(normalized.owner).toBe(normalized.meta.reviewer);
 	});
 
 	it('preserves Date and Surreal DateTime fields while normalizing id-like fields', () => {

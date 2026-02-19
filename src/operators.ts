@@ -1,4 +1,4 @@
-import { eq, type IR, or } from '@tanstack/db';
+import { type IR, or, eq as tanstackEq } from '@tanstack/db';
 import { RecordId } from 'surrealdb';
 import { normalizeRecordIdLikeValue, toRecordIdString } from './id';
 
@@ -37,5 +37,8 @@ export const eqRecordId = (
 	// biome-ignore lint/suspicious/noExplicitAny: TanStack query refs are proxy-typed at call sites.
 	const fieldRef = field as any;
 	const canonical = `${parsed.table}:${parsed.id}`;
-	return or(eq(fieldRef, canonical), eq(fieldRef.id, parsed.id));
+	return or(
+		tanstackEq(fieldRef, canonical),
+		tanstackEq(fieldRef.id, parsed.id),
+	);
 };

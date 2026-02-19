@@ -18,6 +18,7 @@ import { Features, RecordId } from 'surrealdb';
 
 import {
 	normalizeRecordIdLikeFields,
+	normalizeRecordIdLikeValueDeep,
 	toRecordId,
 	toRecordIdString,
 } from './id';
@@ -202,8 +203,13 @@ export function surrealCollectionOptions<
 	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
 	const normalizeMutationId = (rid: RecordId | string): RecordId =>
 		toRecordId(config.table.name, rid);
-	const withRecordId = (row: T): T =>
-		({ ...row, id: normalizeMutationId(row.id) }) as T;
+	const withRecordId = (row: T): T => {
+		const normalized = normalizeRecordIdLikeValueDeep(row) as T;
+		return {
+			...normalized,
+			id: normalizeMutationId(normalized.id),
+		} as T;
+	};
 	const toLoroStoredRow = (row: T): T => ({ ...row, id: keyOf(row.id) }) as T;
 
 	const loroKey = loro?.key ?? id ?? 'surreal';
