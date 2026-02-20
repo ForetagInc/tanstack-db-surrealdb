@@ -27,19 +27,21 @@ describe('id helpers', () => {
 		expect(plain).toBe('hello');
 	});
 
-	it('normalizes record-id-like objects by shape or toString', () => {
+	it('does not treat arbitrary objects as record ids', () => {
 		const byShape = normalizeRecordIdLikeValue({
 			table: 'profile',
 			id: 'abc',
 		});
-		expect(byShape instanceof RecordId).toBe(true);
-		expect(toRecordIdString(byShape as RecordId)).toBe('profile:abc');
+		expect(byShape).toEqual({
+			table: 'profile',
+			id: 'abc',
+		});
 
 		const byString = normalizeRecordIdLikeValue({
 			toString: () => 'profile:def',
 		});
-		expect(byString instanceof RecordId).toBe(true);
-		expect(toRecordIdString(byString as RecordId)).toBe('profile:def');
+		expect(typeof byString).toBe('object');
+		expect(byString instanceof RecordId).toBe(false);
 	});
 
 	it('normalizes record-id-like fields in an object', () => {
@@ -74,36 +76,20 @@ describe('id helpers', () => {
 		expect(normalized.owner).toBe(normalized.meta.reviewer);
 	});
 
-	it('reuses foreign RecordId-like identity for equivalent values', () => {
-		class ForeignRid {
-			constructor(private rid: string) {}
-			toString() {
-				return this.rid;
-			}
-		}
-
-		const foreign = new ForeignRid('account:foreign');
-		const normalizedForeign = normalizeRecordIdLikeValue(foreign);
-		const native = normalizeRecordIdLikeValue(new RecordId('account', 'foreign'));
-
-		expect(normalizedForeign).toBe(foreign);
-		expect(native).toBe(foreign);
-	});
-
-	it('normalizes wrapped object ids like { id: RecordIdLike }', () => {
-		class ForeignRid {
-			constructor(private rid: string) {}
-			toString() {
-				return this.rid;
-			}
-		}
-
+	it('normalizes wrapped ids like { id: RecordId|string }', () => {
 		const wrapped = {
-			id: new ForeignRid('account:wrapped'),
+			id: 'account:wrapped',
 		};
 		const out = normalizeRecordIdLikeValue(wrapped);
 		expect(out instanceof RecordId).toBe(true);
 		expect(String(out)).toBe('account:wrapped');
+
+		const wrappedNative = {
+			id: new RecordId('account', 'wrapped'),
+		};
+		const outNative = normalizeRecordIdLikeValue(wrappedNative);
+		expect(outNative instanceof RecordId).toBe(true);
+		expect(String(outNative)).toBe('account:wrapped');
 	});
 
 	it('preserves Date and Surreal DateTime fields while normalizing id-like fields', () => {

@@ -1,14 +1,11 @@
 import { RecordId } from 'surrealdb';
 
-const recordIdInternPool = new Map<string, unknown>();
+const recordIdInternPool = new Map<string, RecordId>();
 
-const internRecordIdLike = (
-	canonical: string,
-	valueFactory: () => unknown,
-): unknown => {
+const internRecordId = (canonical: string): RecordId => {
 	const cached = recordIdInternPool.get(canonical);
-	if (cached !== undefined) return cached;
-	const created = valueFactory();
+	if (cached) return cached;
+	const created = canonicalToNativeRecordId(canonical);
 	recordIdInternPool.set(canonical, created);
 	return created;
 };
@@ -18,14 +15,6 @@ const canonicalToNativeRecordId = (canonical: string): RecordId => {
 	const table = canonical.slice(0, idx);
 	const key = canonical.slice(idx + 1);
 	return new RecordId(table, key);
-};
-
-const internNativeRecordId = (recordId: RecordId): unknown => {
-	const canonical = toRecordIdString(recordId);
-	const cached = recordIdInternPool.get(canonical);
-	if (cached !== undefined) return cached;
-	recordIdInternPool.set(canonical, recordId);
-	return recordId;
 };
 
 export const stripOuterQuotes = (value: string): string => {
@@ -93,65 +82,12 @@ const toCanonicalRecordIdString = (value: string): string | undefined => {
 	return `${table}:${key}`;
 };
 
-const asCanonicalRecordIdFromObjectShape = (
-	value: unknown,
-): string | undefined => {
+const unwrapIdWrapper = (value: unknown): unknown => {
 	if (!value || typeof value !== 'object') return undefined;
 	const obj = value as Record<string, unknown>;
-
-	const table =
-		typeof obj.table === 'string'
-			? obj.table
-			: typeof obj.tb === 'string'
-				? obj.tb
-				: undefined;
-	const key =
-		typeof obj.id === 'string' || typeof obj.id === 'number'
-			? String(obj.id)
-			: undefined;
-
-	if (table && key && looksLikeTableName(table)) {
-		return `${table}:${key}`;
-	}
-
-	// Handle wrapped record-id-like values only when object is effectively { id: ... }.
-	// This avoids treating normal DB rows ({ id, owner, ... }) as a record id.
 	const keys = Object.keys(obj);
-	if (keys.length === 1 && keys[0] === 'id') {
-		const idValue = obj.id;
-		if (typeof idValue === 'string') {
-			const nestedCanonical = toCanonicalRecordIdString(idValue);
-			if (nestedCanonical) return nestedCanonical;
-		}
-		if (idValue && typeof idValue === 'object' && idValue !== value) {
-			return (
-				asCanonicalRecordIdFromObjectShape(idValue) ??
-				asCanonicalRecordIdFromObjectString(idValue)
-			);
-		}
-	}
-
-	return undefined;
-};
-
-const asCanonicalRecordIdFromObjectString = (
-	value: unknown,
-): string | undefined => {
-	if (!value || typeof value !== 'object') return undefined;
-	const obj = value as { toString?: () => unknown };
-	if (typeof obj.toString !== 'function') return undefined;
-
-	const raw = String(obj.toString());
-	if (!raw || raw === '[object Object]') return undefined;
-	return toCanonicalRecordIdString(raw);
-};
-
-const isForeignRecordIdObject = (value: unknown): boolean => {
-	if (!value || typeof value !== 'object' || value instanceof RecordId) {
-		return false;
-	}
-	const proto = Object.getPrototypeOf(value);
-	return proto !== null && proto !== Object.prototype;
+	if (keys.length !== 1 || keys[0] !== 'id') return undefined;
+	return obj.id;
 };
 
 export const asCanonicalRecordIdString = (
@@ -163,40 +99,64 @@ export const asCanonicalRecordIdString = (
 	if (value instanceof RecordId) {
 		return toCanonicalRecordIdString(value.toString());
 	}
-	return (
-		asCanonicalRecordIdFromObjectShape(value) ??
-		asCanonicalRecordIdFromObjectString(value)
-	);
+	const wrappedId = unwrapIdWrapper(value);
+	if (wrappedId === undefined || wrappedId === value) return undefined;
+	return asCanonicalRecordIdString(wrappedId);
 };
 
 export const toNativeRecordIdLikeValue = (value: unknown): unknown => {
-	if (value instanceof RecordId) return value;
+	if (value instanceof RecordId) {
+		const canonical = asCanonicalRecordIdString(value);
+		if (!canonical) return value;
+		return internRecordId(canonical);
+	}
 	const canonical = asCanonicalRecordIdString(value);
 	if (!canonical) return value;
-	return canonicalToNativeRecordId(canonical);
+	return internRecordId(canonical);
+};
+
+export const preferRecordIdLikeIdentity = (value: unknown): unknown => {
+	const canonical = asCanonicalRecordIdString(value);
+	if (!canonical) return normalizeRecordIdLikeValue(value);
+
+	if (value instanceof RecordId) {
+		recordIdInternPool.set(canonical, value);
+		return value;
+	}
+
+	const wrappedId = unwrapIdWrapper(value);
+	if (wrappedId instanceof RecordId) {
+		recordIdInternPool.set(canonical, wrappedId);
+		return wrappedId;
+	}
+
+	return internRecordId(canonical);
+};
+
+export const preferRecordIdLikeIdentityDeep = <T>(value: T): T => {
+	const preferred = preferRecordIdLikeIdentity(value);
+
+	if (Array.isArray(preferred)) {
+		return preferred.map((item) =>
+			preferRecordIdLikeIdentityDeep(item),
+		) as T;
+	}
+
+	if (isPlainObject(preferred)) {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(preferred)) {
+			out[k] = preferRecordIdLikeIdentityDeep(v);
+		}
+		return out as T;
+	}
+
+	return preferred as T;
 };
 
 export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
-	if (value instanceof RecordId) {
-		return internNativeRecordId(value);
-	}
-	if (typeof value === 'object' && value !== null) {
-		const canonical =
-			asCanonicalRecordIdFromObjectShape(value) ??
-			asCanonicalRecordIdFromObjectString(value);
-		if (!canonical) return value;
-
-		if (isForeignRecordIdObject(value)) {
-			// Prefer caller-owned RecordId-like instances as canonical identity so
-			// TanStack eq() (reference comparison for objects) can match naturally.
-			recordIdInternPool.set(canonical, value);
-			return value;
-		}
-
-		return internRecordIdLike(canonical, () =>
-			canonicalToNativeRecordId(canonical),
-		);
-	}
+	if (value instanceof RecordId) return toNativeRecordIdLikeValue(value);
+	if (typeof value === 'object' && value !== null)
+		return toNativeRecordIdLikeValue(value);
 	if (typeof value !== 'string') return value;
 
 	const trimmed = value.trim();
@@ -205,9 +165,7 @@ export const normalizeRecordIdLikeValue = (value: unknown): unknown => {
 		toCanonicalRecordIdString(unquoted) ??
 		(unquoted === trimmed ? undefined : toCanonicalRecordIdString(trimmed));
 	if (canonical) {
-		return internRecordIdLike(canonical, () =>
-			canonicalToNativeRecordId(canonical),
-		);
+		return internRecordId(canonical);
 	}
 
 	// Keep original value shape if it isn't record-id-like

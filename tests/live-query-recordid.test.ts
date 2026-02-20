@@ -11,13 +11,6 @@ type CalendarRow = {
 	title: string;
 };
 
-class ForeignRid {
-	constructor(private rid: string) {}
-	toString() {
-		return this.rid;
-	}
-}
-
 const runOwnerMatchQuery = async (
 	owner: unknown,
 	profileId: unknown,
@@ -67,21 +60,10 @@ const runOwnerMatchQuery = async (
 };
 
 describe('live query record-id equality suite', () => {
-	it('matches eq(owner, profileId) for native RecordId instances', async () => {
+	it('matches eq(owner, profileId) for different RecordId instances with same value', async () => {
 		const rows = await runOwnerMatchQuery(
 			new RecordId('account', 'x'),
 			new RecordId('account', 'x'),
-		);
-
-		expect(rows.length).toBe(1);
-		expect(toRecordIdString(rows[0]?.id as RecordId)).toBe('calendar:1');
-		expect(toRecordIdString(rows[0]?.owner as RecordId)).toBe('account:x');
-	});
-
-	it('matches eq(owner, profileId) when profileId is a foreign RecordId-like object', async () => {
-		const rows = await runOwnerMatchQuery(
-			new RecordId('account', 'x'),
-			new ForeignRid('account:x'),
 		);
 
 		expect(rows.length).toBe(1);
@@ -92,7 +74,7 @@ describe('live query record-id equality suite', () => {
 	it('matches eq(owner, profileId) when owner is wrapped as { id: recordId }', async () => {
 		const rows = await runOwnerMatchQuery(
 			{ id: new RecordId('account', 'x') },
-			new ForeignRid('account:x'),
+			new RecordId('account', 'x'),
 		);
 
 		expect(rows.length).toBe(1);
@@ -103,9 +85,37 @@ describe('live query record-id equality suite', () => {
 	it('does not match for different record ids', async () => {
 		const rows = await runOwnerMatchQuery(
 			new RecordId('account', 'x'),
-			new ForeignRid('account:y'),
+			new RecordId('account', 'y'),
 		);
 
 		expect(rows.length).toBe(0);
+	});
+
+	it('remains stable across repeated runs', async () => {
+		const first = await runOwnerMatchQuery(
+			new RecordId('account', 'x'),
+			new RecordId('account', 'x'),
+		);
+		const second = await runOwnerMatchQuery(
+			new RecordId('account', 'x'),
+			new RecordId('account', 'x'),
+		);
+
+		expect(first.length).toBe(1);
+		expect(second.length).toBe(1);
+	});
+
+	it('matches eq(calendar.owner, profile?.id) in production shape', async () => {
+		const profile: { id?: unknown } = {
+			id: new RecordId('account', 'x'),
+		};
+
+		const rows = await runOwnerMatchQuery(
+			new RecordId('account', 'x'),
+			profile?.id,
+		);
+
+		expect(rows.length).toBe(1);
+		expect(toRecordIdString(rows[0]?.owner as RecordId)).toBe('account:x');
 	});
 });

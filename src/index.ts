@@ -19,6 +19,7 @@ import { Features, RecordId } from 'surrealdb';
 import {
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
+	preferRecordIdLikeIdentityDeep,
 	toRecordId,
 	toRecordIdString,
 } from './id';
@@ -119,7 +120,7 @@ const normalizeExpressionLiteralsInPlace = (expr: unknown): void => {
 		args?: unknown[];
 	};
 	if (node.type === 'val') {
-		node.value = normalizeRecordIdLikeValueDeep(node.value);
+		node.value = preferRecordIdLikeIdentityDeep(node.value);
 		return;
 	}
 	if (node.type === 'func' && Array.isArray(node.args)) {

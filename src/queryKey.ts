@@ -1,5 +1,5 @@
 import type { LoadSubsetOptions } from '@tanstack/db';
-import type { RecordId } from 'surrealdb';
+import { RecordId } from 'surrealdb';
 import {
 	asCanonicalRecordIdString,
 	normalizeRecordIdLikeValue,
@@ -7,13 +7,6 @@ import {
 } from './id';
 
 type BasicExpression = NonNullable<LoadSubsetOptions['where']>;
-
-const isRecordId = (value: unknown): value is RecordId =>
-	typeof value === 'object' &&
-	value !== null &&
-	'toString' in value &&
-	typeof (value as { toString: unknown }).toString === 'function' &&
-	'table' in value;
 
 const serializeValue = (value: unknown): unknown => {
 	const canonicalRecordId = asCanonicalRecordIdString(value);
@@ -25,7 +18,7 @@ const serializeValue = (value: unknown): unknown => {
 	}
 
 	const normalized = normalizeRecordIdLikeValue(value);
-	if (isRecordId(normalized)) {
+	if (normalized instanceof RecordId) {
 		return {
 			__type: 'recordid',
 			value: toRecordIdString(normalized),

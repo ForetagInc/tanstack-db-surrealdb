@@ -32,21 +32,4 @@ describe('serializeSurrealSubsetOptions', () => {
 		expect(fromString).toBe(fromRecordId);
 	});
 
-	it('normalizes foreign RecordId-like values to the same key', () => {
-		class RecordId2 {
-			constructor(private rid: string) {}
-			toString() {
-				return this.rid;
-			}
-		}
-
-		const fromForeign = serializeSurrealSubsetOptions({
-			where: eqExpr('owner', new RecordId2('account:a')) as never,
-		});
-		const fromRecordId = serializeSurrealSubsetOptions({
-			where: eqExpr('owner', new RecordId('account', 'a')) as never,
-		});
-
-		expect(fromForeign).toBe(fromRecordId);
-	});
 });
