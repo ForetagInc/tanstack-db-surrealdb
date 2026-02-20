@@ -59,6 +59,70 @@ const runOwnerMatchQuery = async (
 	return filtered.toArray as Array<{ id: string | RecordId; owner: unknown }>;
 };
 
+const runOwnerSubscribeWhereMatch = async (
+	owner: unknown,
+	profileId: unknown,
+): Promise<Array<{ type: string; value?: unknown }>> => {
+	const queryClient = new QueryClient();
+	const db = {
+		query: async () => [
+			[
+				{
+					id: new RecordId('calendar', '1'),
+					owner,
+					title: 'Planning',
+				},
+			],
+		],
+		create: () => ({ content: async () => ({}) }),
+		insert: async () => ({}),
+		update: () => ({ merge: async () => {} }),
+		delete: async () => {},
+		upsert: () => ({ merge: async () => {} }),
+		isFeatureSupported: () => false,
+		live: () => ({ subscribe: () => {}, kill: async () => {} }),
+	};
+
+	const calendar = createCollection(
+		surrealCollectionOptions<CalendarRow>({
+			db: db as never,
+			queryClient,
+			queryKey: ['calendar-subscribe'],
+			syncMode: 'eager',
+			table: { name: 'calendar' },
+		}),
+	);
+
+	// Prime collection data first so where() literals are normalized against
+	// already-loaded RecordId instances.
+	await calendar.preload();
+
+	return new Promise((resolve, reject) => {
+		const timeout = setTimeout(
+			() => reject(new Error('Timed out waiting for filtered changes.')),
+			250,
+		);
+
+		let subscription: { unsubscribe: () => void } | undefined;
+		subscription = calendar.subscribeChanges(
+			(changes) => {
+				if (!changes.length) return;
+				clearTimeout(timeout);
+				subscription?.unsubscribe();
+				resolve(changes as Array<{ type: string; value?: unknown }>);
+			},
+			{
+				includeInitialState: true,
+				where: (row) =>
+					eq(
+						(row as { owner: unknown }).owner,
+						profileId as RecordId,
+					),
+			},
+		);
+	});
+};
+
 describe('live query record-id equality suite', () => {
 	it('matches eq(owner, profileId) for different RecordId instances with same value', async () => {
 		const rows = await runOwnerMatchQuery(
@@ -117,5 +181,15 @@ describe('live query record-id equality suite', () => {
 
 		expect(rows.length).toBe(1);
 		expect(toRecordIdString(rows[0]?.owner as RecordId)).toBe('account:x');
+	});
+
+	it('matches subscribeChanges where(eq(owner, profileId)) after preload', async () => {
+		const changes = await runOwnerSubscribeWhereMatch(
+			new RecordId('account', 'x'),
+			new RecordId('account', 'x'),
+		);
+
+		expect(changes.length).toBe(1);
+		expect(changes[0]?.type).toBe('insert');
 	});
 });

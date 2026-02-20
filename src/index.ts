@@ -90,7 +90,10 @@ const SUBSCRIBE_PATCHED = Symbol('surrealdbSubscribePatched');
 
 type SubscribeChangesFn = (
 	callback: (changes: Array<unknown>) => void,
-	options?: { whereExpression?: unknown } & Record<string, unknown>,
+	options?: {
+		where?: (row: unknown) => unknown;
+		whereExpression?: unknown;
+	} & Record<string, unknown>,
 ) => unknown;
 
 const patchSubscribeChangesForRecordIds = (collection: unknown): void => {
@@ -104,10 +107,19 @@ const patchSubscribeChangesForRecordIds = (collection: unknown): void => {
 
 	const original = target.subscribeChanges.bind(target);
 	target.subscribeChanges = (callback, options) => {
-		if (options?.whereExpression) {
-			normalizeExpressionLiteralsInPlace(options.whereExpression);
+		const nextOptions = options ? { ...options } : options;
+		if (nextOptions?.whereExpression)
+			normalizeExpressionLiteralsInPlace(nextOptions.whereExpression);
+
+		if (typeof nextOptions?.where === 'function') {
+			const originalWhere = nextOptions.where;
+			nextOptions.where = (row: unknown) => {
+				const expr = originalWhere(row);
+				normalizeExpressionLiteralsWithExistingIdentityInPlace(expr);
+				return expr;
+			};
 		}
-		return original(callback, options);
+		return original(callback, nextOptions);
 	};
 	target[SUBSCRIBE_PATCHED] = true;
 };
@@ -125,6 +137,25 @@ const normalizeExpressionLiteralsInPlace = (expr: unknown): void => {
 	}
 	if (node.type === 'func' && Array.isArray(node.args)) {
 		for (const arg of node.args) normalizeExpressionLiteralsInPlace(arg);
+	}
+};
+
+const normalizeExpressionLiteralsWithExistingIdentityInPlace = (
+	expr: unknown,
+): void => {
+	if (!expr || typeof expr !== 'object') return;
+	const node = expr as {
+		type?: string;
+		value?: unknown;
+		args?: unknown[];
+	};
+	if (node.type === 'val') {
+		node.value = normalizeRecordIdLikeValueDeep(node.value);
+		return;
+	}
+	if (node.type === 'func' && Array.isArray(node.args)) {
+		for (const arg of node.args)
+			normalizeExpressionLiteralsWithExistingIdentityInPlace(arg);
 	}
 };
 
