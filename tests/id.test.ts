@@ -2,14 +2,21 @@ import { describe, expect, it } from 'bun:test';
 import { DateTime, RecordId } from 'surrealdb';
 
 import {
+	asCanonicalRecordIdString,
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
 	normalizeRecordIdLikeValue,
 	stripOuterQuotes,
+	toNativeRecordIdLikeValue,
 	toRecordKeyString,
 	toRecordId,
 	toRecordIdString,
 } from '../src/id';
+
+const cjsSurreal = require('surrealdb') as {
+	RecordId: new (table: string, id: string) => unknown;
+};
+const CjsRecordId = cjsSurreal.RecordId;
 
 describe('id helpers', () => {
 	it('strips matching single or double quotes only', () => {
@@ -42,6 +49,19 @@ describe('id helpers', () => {
 		});
 		expect(typeof byString).toBe('object');
 		expect(byString instanceof RecordId).toBe(false);
+	});
+
+	it('normalizes cross-runtime Surreal RecordId instances (CJS/ESM)', () => {
+		const cjsRid = new CjsRecordId('account', 'cross-runtime');
+		expect(cjsRid instanceof RecordId).toBe(false);
+
+		const normalized = normalizeRecordIdLikeValue(cjsRid);
+		expect(normalized).toBe(cjsRid);
+		expect(asCanonicalRecordIdString(normalized)).toBe('account:cross-runtime');
+
+		const native = toNativeRecordIdLikeValue(cjsRid);
+		expect(native instanceof RecordId).toBe(true);
+		expect(toRecordIdString(native as RecordId)).toBe('account:cross-runtime');
 	});
 
 	it('normalizes record-id-like fields in an object', () => {

@@ -1,566 +1,88 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type {
-	CollectionConfig,
-	DeleteMutationFn,
-	DeleteMutationFnParams,
-	InsertMutationFn,
-	InsertMutationFnParams,
-	OperationConfig,
-	StandardSchema,
-	Transaction,
-	UpdateMutationFn,
-	UpdateMutationFnParams,
-	UtilsRecord,
-} from '@tanstack/db';
-import { queryCollectionOptions } from '@tanstack/query-db-collection';
-import { type Container, LoroDoc } from 'loro-crdt';
-import { Features, RecordId } from 'surrealdb';
+import type { CollectionConfig, SyncConfig } from '@tanstack/db';
+import type { LoroDoc } from 'loro-crdt';
+import type { Surreal, Table } from 'surrealdb';
 
-import {
-	normalizeRecordIdLikeFields,
-	normalizeRecordIdLikeValueDeep,
-	preferRecordIdLikeIdentityDeep,
-	toRecordId,
-	toRecordIdString,
-} from './id';
-import { eqRecordId } from './operators';
-import { serializeSurrealSubsetOptions } from './queryKey';
-import { manageTable } from './table';
-import type {
-	SurrealCollectionConfig,
-	SurrealSubset,
-	SyncedTable,
-} from './types';
+import type { E2EEConfig } from './encryption';
 
-type Cleanup = () => void;
-
-type MutationInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
-	id?: T['id'];
-};
-
-type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
-	CollectionConfig<
-		T,
-		string,
-		StandardSchemaV1<MutationInput<T>, T>,
-		UtilsRecord
-	> & {
-		schema: StandardSchemaV1<MutationInput<T>, T>;
-		utils: UtilsRecord;
-	};
-
-export { toRecordKeyString } from './id';
-export { eqRecordId };
-
-declare module '@tanstack/db' {
-	interface Collection<
-		T extends object = Record<string, unknown>,
-		TKey extends string | number = string | number,
-		TUtils extends UtilsRecord = UtilsRecord,
-		TSchema extends StandardSchemaV1 = StandardSchemaV1,
-		TInsertInput extends object = T,
+interface SurrealCollectionConfig<TItem extends object>
+	extends Omit<
+		CollectionConfig<TItem>,
+		'onInsert' | 'onUpdate' | 'onDelete'
 	> {
-		delete(
-			keys: Array<TKey | RecordId | string> | TKey | RecordId | string,
-			config?: OperationConfig,
-			// biome-ignore lint/suspicious/noExplicitAny: Match TanstackDB
-		): Transaction<any>;
-	}
+	db: Surreal;
+	table: Table;
+	kind?: 'edge';
+	e2ee?: E2EEConfig<TItem>;
+	crdt?: boolean;
 }
 
-type SyncReturn =
-	| undefined
-	| Cleanup
-	| {
-			cleanup?: Cleanup;
-			unsubscribe?: Cleanup;
-			dispose?: Cleanup;
-			loadSubset?: unknown; // keep unknown; Only pass through
-	  };
-
-const TEMP_ID_PREFIX = '__temp__';
-const NOOP: Cleanup = () => {};
-
-type QueryWriteUtils = {
-	writeUpsert?: (data: unknown) => void;
-	writeDelete?: (key: string) => void;
-};
-
-const SUBSCRIBE_PATCHED = Symbol('surrealdbSubscribePatched');
-
-type SubscribeChangesFn = (
-	callback: (changes: Array<unknown>) => void,
-	options?: {
-		where?: (row: unknown) => unknown;
-		whereExpression?: unknown;
-	} & Record<string, unknown>,
-) => unknown;
-
-const patchSubscribeChangesForRecordIds = (collection: unknown): void => {
-	if (!collection || typeof collection !== 'object') return;
-	const target = collection as {
-		subscribeChanges?: SubscribeChangesFn;
-		[SUBSCRIBE_PATCHED]?: boolean;
-	};
-	if (target[SUBSCRIBE_PATCHED]) return;
-	if (typeof target.subscribeChanges !== 'function') return;
-
-	const original = target.subscribeChanges.bind(target);
-	target.subscribeChanges = (callback, options) => {
-		const nextOptions = options ? { ...options } : options;
-		if (nextOptions?.whereExpression)
-			normalizeExpressionLiteralsInPlace(nextOptions.whereExpression);
-
-		if (typeof nextOptions?.where === 'function') {
-			const originalWhere = nextOptions.where;
-			nextOptions.where = (row: unknown) => {
-				const expr = originalWhere(row);
-				normalizeExpressionLiteralsWithExistingIdentityInPlace(expr);
-				return expr;
-			};
-		}
-		return original(callback, nextOptions);
-	};
-	target[SUBSCRIBE_PATCHED] = true;
-};
-
-const normalizeExpressionLiteralsInPlace = (expr: unknown): void => {
-	if (!expr || typeof expr !== 'object') return;
-	const node = expr as {
-		type?: string;
-		value?: unknown;
-		args?: unknown[];
-	};
-	if (node.type === 'val') {
-		node.value = preferRecordIdLikeIdentityDeep(node.value);
-		return;
-	}
-	if (node.type === 'func' && Array.isArray(node.args)) {
-		for (const arg of node.args) normalizeExpressionLiteralsInPlace(arg);
-	}
-};
-
-const normalizeExpressionLiteralsWithExistingIdentityInPlace = (
-	expr: unknown,
-): void => {
-	if (!expr || typeof expr !== 'object') return;
-	const node = expr as {
-		type?: string;
-		value?: unknown;
-		args?: unknown[];
-	};
-	if (node.type === 'val') {
-		node.value = normalizeRecordIdLikeValueDeep(node.value);
-		return;
-	}
-	if (node.type === 'func' && Array.isArray(node.args)) {
-		for (const arg of node.args)
-			normalizeExpressionLiteralsWithExistingIdentityInPlace(arg);
-	}
-};
-
-const normalizeSubsetLiteralsInPlace = (subset: SurrealSubset | undefined) => {
-	if (!subset) return;
-	normalizeExpressionLiteralsInPlace(subset.where);
-	normalizeExpressionLiteralsInPlace(subset.cursor?.whereFrom);
-	normalizeExpressionLiteralsInPlace(subset.cursor?.whereCurrent);
-};
-
-const createTempRecordId = (tableName: string): RecordId => {
-	const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-	return new RecordId(tableName, `${TEMP_ID_PREFIX}${suffix}`);
-};
-
-const isTempId = (id: string | RecordId, tableName: string): boolean => {
-	if (id instanceof RecordId) {
-		const recordKey = (id as unknown as { id?: unknown }).id;
-		return (
-			typeof recordKey === 'string' &&
-			recordKey.startsWith(TEMP_ID_PREFIX)
-		);
-	}
-
-	const raw = toRecordIdString(id);
-	const key = raw.startsWith(`${tableName}:`)
-		? raw.slice(tableName.length + 1)
-		: raw;
-	return key.startsWith(TEMP_ID_PREFIX);
-};
-
-function toCleanup(res: SyncReturn): Cleanup {
-	if (!res) return NOOP;
-	if (typeof res === 'function') return res;
-
-	const cleanup = res.cleanup ?? res.unsubscribe ?? res.dispose;
-
-	return typeof cleanup === 'function' ? cleanup : NOOP;
-}
-
-function hasLoadSubset(
-	res: SyncReturn,
-): res is { loadSubset: unknown } & Record<string, unknown> {
-	return typeof res === 'object' && res !== null && 'loadSubset' in res;
-}
-
-const getWriteUtils = (utils: unknown): QueryWriteUtils =>
-	typeof utils === 'object' && utils !== null
-		? (utils as QueryWriteUtils)
-		: {};
-
-const omitUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
-	Object.fromEntries(
-		Object.entries(obj).filter(([, value]) => value !== undefined),
-	) as Partial<T>;
-
-function createInsertSchema<T extends { id: string | RecordId }>(
-	tableName: string,
-): StandardSchemaV1<MutationInput<T>, T> {
-	return {
-		'~standard': {
-			version: 1,
-			vendor: 'tanstack-db-surrealdb',
-			validate: (value: unknown) => {
-				if (
-					!value ||
-					typeof value !== 'object' ||
-					Array.isArray(value)
-				) {
-					return {
-						issues: [{ message: 'Insert data must be an object.' }],
-					};
-				}
-
-				const data = normalizeRecordIdLikeFields({
-					...(value as Record<string, unknown>),
-				}) as MutationInput<T>;
-
-				if (!data.id)
-					data.id = createTempRecordId(tableName) as T['id'];
-
-				return { value: data as T };
-			},
-			types: undefined,
-		},
-	};
-}
-
-export function surrealCollectionOptions<
-	T extends SyncedTable<object>,
-	S extends Record<string, Container> = { [k: string]: never },
->({
-	id,
-	useLoro = false,
-	onError,
+export const surrealCollectionOptions = <TItem extends object>({
 	db,
-	queryClient,
-	queryKey,
-	syncMode = 'eager',
-	...config
-}: SurrealCollectionConfig): CollectionConfig<
-	T,
-	string,
-	StandardSchemaV1<MutationInput<T>, T>,
-	UtilsRecord
-> & {
-	schema: StandardSchemaV1<MutationInput<T>, T>;
-	utils: UtilsRecord;
-} {
-	let loro: { doc: LoroDoc<S>; key?: string } | undefined;
-	if (useLoro) loro = { doc: new LoroDoc(), key: id };
-	const resolvedQueryKey =
-		syncMode === 'on-demand'
-			? (opts: SurrealSubset = {}) => {
-					normalizeSubsetLiteralsInPlace(opts);
-					const serialized = serializeSurrealSubsetOptions(opts);
-					return serialized
-						? [...queryKey, serialized]
-						: [...queryKey];
-				}
-			: queryKey;
+	table,
+	crdt,
+	kind,
+	e2ee,
+}: SurrealCollectionConfig<TItem>) => {
+	let state: 'connected' | 'uninitialized' | 'disconnected' = 'uninitialized';
 
-	const table = manageTable<T>(db, useLoro, config.table);
-
-	const keyOf = (rid: RecordId | string): string => toRecordIdString(rid);
-
-	const getKey = (row: { id: string | RecordId }) => keyOf(row.id);
-	const normalizeMutationId = (rid: RecordId | string): RecordId =>
-		toRecordId(config.table.name, rid);
-	const withRecordId = (row: T): T => {
-		const normalized = normalizeRecordIdLikeValueDeep(row) as T;
-		return {
-			...normalized,
-			id: normalizeMutationId(normalized.id),
-		} as T;
-	};
-	const toLoroStoredRow = (row: T): T => ({ ...row, id: keyOf(row.id) }) as T;
-
-	const loroKey = loro?.key ?? id ?? 'surreal';
-	const loroMap = useLoro ? (loro?.doc?.getMap?.(loroKey) ?? null) : null;
-	const commitLoro = () => {
-		loro?.doc?.commit?.();
+	const e2eeFields = {
+		ciphertext: 'encryption',
+		version: 'encryption_version',
+		nonce: 'nonce',
 	};
 
-	const loroPut = (row: T, commit = true) => {
-		if (!loroMap) return;
-		loroMap.set(getKey(row), toLoroStoredRow(row) as unknown);
-		if (commit) commitLoro();
-	};
+	const docs = new Map<string, LoroDoc>();
 
-	const loroRemove = (idStr: string, commit = true) => {
-		if (!loroMap) return;
-		loroMap.delete(idStr);
-		if (commit) commitLoro();
-	};
-
-	const mergeLocalOverServer = (serverRows: T[]): T[] => {
-		if (!useLoro || !loroMap) return serverRows;
-
-		const localJson = (loroMap.toJSON?.() ?? {}) as Record<string, T>;
-
-		const out: T[] = [];
-		for (const s of serverRows) {
-			const idStr = getKey(s);
-			const l = localJson[idStr];
-
-			if (!l) {
-				out.push(s);
-				continue;
+	const sync: SyncConfig<TItem>['sync'] = async ({
+		begin,
+		write,
+		commit,
+		markReady,
+		collection,
+	}) => {
+		async function init() {
+			async function hydrate() {
+				const rows = await db.select(table);
+				begin();
 			}
 
-			if ((l.sync_deleted ?? false) === true) continue;
-			out.push(withRecordId(l));
+			async function subscribe() {
+				const connection = await db.live(table);
+
+				if (!connection.isAlive) state = 'disconnected';
+				else state = 'connected';
+
+				connection.subscribe(async ({ action, value }) => {
+					if (action === 'KILLED') {
+						await connection.kill();
+						state = 'disconnected';
+						return;
+					}
+
+					begin();
+					write({
+						type: surrealActionMapType(action),
+						value: value as TItem,
+					});
+					commit();
+				});
+			}
 		}
 
-		return out;
+		init();
+
+		const onInsert: CollectionConfig<TItem>['onInsert'] = async ({
+			transaction,
+		}) => {};
+
+		const onUpdate: CollectionConfig<TItem>['onUpdate'] = async ({
+			transaction,
+		}) => {};
+
+		const onDelete: CollectionConfig<TItem>['onDelete'] = async ({
+			transaction,
+		}) => {};
+
+		return () => {};
 	};
-
-	const base = queryCollectionOptions({
-		schema: createInsertSchema<T>(config.table.name),
-		getKey,
-
-		queryKey: resolvedQueryKey,
-		queryClient,
-
-		syncMode,
-
-		queryFn: async ({ meta }) => {
-			try {
-				const subset =
-					syncMode === 'on-demand'
-						? meta?.loadSubsetOptions
-						: undefined;
-				normalizeSubsetLiteralsInPlace(subset);
-
-				const rows =
-					syncMode === 'eager'
-						? await table.listAll()
-						: await table.loadSubset(subset);
-
-				return mergeLocalOverServer(rows).map((row) =>
-					withRecordId(row),
-				);
-			} catch (e) {
-				onError?.(e);
-				return [];
-			}
-		},
-
-		onInsert: (async (p: InsertMutationFnParams<T>) => {
-			const now = new Date();
-
-			const resultRows: T[] = [];
-			let shouldCommitLoro = false;
-			for (const m of p.transaction.mutations) {
-				if (m.type !== 'insert') continue;
-
-				const baseRow = { ...m.modified } as T;
-
-				const row = useLoro
-					? ({
-							...baseRow,
-							updated_at: now,
-							sync_deleted: false,
-						} as T)
-					: baseRow;
-				const normalizedRow = withRecordId(row);
-
-				if (useLoro) {
-					loroPut(normalizedRow, false);
-					shouldCommitLoro = true;
-				}
-				if (isTempId(normalizedRow.id, config.table.name)) {
-					const tempKey = keyOf(normalizedRow.id);
-					const { id: _id, ...payload } = normalizedRow as Record<
-						string,
-						unknown
-					>;
-					const persisted = await table.create(payload as Partial<T>);
-					const resolvedRow = persisted?.id
-						? withRecordId({
-								...normalizedRow,
-								...persisted,
-								id: persisted.id,
-							} as T)
-						: normalizedRow;
-
-					if (useLoro && persisted?.id) {
-						loroRemove(tempKey, false);
-						loroPut(resolvedRow, false);
-					}
-					resultRows.push(resolvedRow);
-				} else {
-					const persisted = await table.create(normalizedRow);
-					resultRows.push(
-						persisted
-							? withRecordId({
-									...normalizedRow,
-									...persisted,
-								} as T)
-							: normalizedRow,
-					);
-				}
-			}
-			if (shouldCommitLoro) commitLoro();
-
-			return resultRows as unknown as StandardSchema<T>;
-		}) as InsertMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
-
-		onUpdate: (async (p: UpdateMutationFnParams<T>) => {
-			const now = new Date();
-			const writeUtils = getWriteUtils(p.collection.utils);
-
-			const resultRows: T[] = [];
-			let shouldCommitLoro = false;
-			for (const m of p.transaction.mutations) {
-				if (m.type !== 'update') continue;
-
-				const idKey = m.key as RecordId;
-				const normalizedModified = omitUndefined(
-					normalizeRecordIdLikeFields({
-						...(m.modified as Record<string, unknown>),
-					}) as Record<string, unknown>,
-				) as Partial<T>;
-				const baseRow = {
-					...normalizedModified,
-					id: normalizeMutationId(idKey),
-				} as T;
-
-				const row = useLoro
-					? ({ ...baseRow, updated_at: now } as T)
-					: baseRow;
-				const normalizedRow = withRecordId(row);
-
-				if (useLoro) {
-					loroPut(normalizedRow, false);
-					shouldCommitLoro = true;
-				}
-
-				await table.update(normalizeMutationId(idKey), normalizedRow);
-				writeUtils.writeUpsert?.(normalizedRow);
-
-				resultRows.push(normalizedRow);
-			}
-			if (shouldCommitLoro) commitLoro();
-
-			void resultRows;
-			return { refetch: false } as unknown as StandardSchema<T>;
-		}) as UpdateMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
-
-		onDelete: (async (p: DeleteMutationFnParams<T>) => {
-			const writeUtils = getWriteUtils(p.collection.utils);
-			let shouldCommitLoro = false;
-			for (const m of p.transaction.mutations) {
-				if (m.type !== 'delete') continue;
-
-				const idKey = m.key as RecordId;
-				const key = keyOf(idKey);
-				if (useLoro) {
-					loroRemove(key, false);
-					shouldCommitLoro = true;
-				}
-
-				await table.softDelete(normalizeMutationId(idKey));
-				writeUtils.writeDelete?.(key);
-			}
-			if (shouldCommitLoro) commitLoro();
-
-			return { refetch: false } as unknown as StandardSchema<T>;
-		}) as DeleteMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
-	} as never) as SurrealCollectionOptionsReturn<T>;
-
-	// LIVE updates -> invalidate all subsets under base queryKey
-	const baseSync = base.sync?.sync;
-
-	const sync = baseSync
-		? {
-				sync: (ctx: Parameters<NonNullable<typeof baseSync>>[0]) => {
-					patchSubscribeChangesForRecordIds(
-						ctx.collection as unknown,
-					);
-					// IMPORTANT: call baseSync exactly once
-					const baseRes = baseSync(ctx) as SyncReturn;
-					const baseCleanup = toCleanup(baseRes);
-
-					// If live queries aren't supported, return the base result untouched
-					if (!db.isFeatureSupported(Features.LiveQueries)) {
-						return baseRes as unknown as ReturnType<
-							NonNullable<typeof baseSync>
-						>;
-					}
-
-					const offLive = table.subscribe((evt) => {
-						if (useLoro) {
-							if (evt.type === 'delete') {
-								loroRemove(getKey(evt.row));
-							} else {
-								loroPut(evt.row);
-							}
-						}
-
-						void queryClient
-							.invalidateQueries({ queryKey, exact: false })
-							.catch((e) => onError?.(e));
-					});
-
-					// Preserve base return shape, just wrap cleanup
-					if (hasLoadSubset(baseRes)) {
-						// on-demand mode relies on this being present
-						const resObj = baseRes as Record<string, unknown>;
-						const rawLoadSubset = resObj.loadSubset;
-						const loadSubset =
-							typeof rawLoadSubset === 'function'
-								? (opts?: SurrealSubset) => {
-										normalizeSubsetLiteralsInPlace(opts);
-										return (
-											rawLoadSubset as (
-												subset?: SurrealSubset,
-											) => unknown
-										)(opts);
-									}
-								: rawLoadSubset;
-						return {
-							...resObj,
-							loadSubset,
-							cleanup: () => {
-								offLive();
-								baseCleanup();
-							},
-						} as unknown as ReturnType<
-							NonNullable<typeof baseSync>
-						>;
-					}
-
-					// eager mode usually returns a cleanup function
-					return (() => {
-						offLive();
-						baseCleanup();
-					}) as unknown as ReturnType<NonNullable<typeof baseSync>>;
-				},
-			}
-		: undefined;
-
-	return {
-		...base,
-		sync: sync ?? base.sync,
-	} as SurrealCollectionOptionsReturn<T>;
-}
+};

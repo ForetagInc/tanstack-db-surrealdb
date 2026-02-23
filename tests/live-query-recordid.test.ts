@@ -5,6 +5,11 @@ import { RecordId } from 'surrealdb';
 import { toRecordIdString } from '../src/id';
 import { surrealCollectionOptions } from '../src/index';
 
+const cjsSurreal = require('surrealdb') as {
+	RecordId: new (table: string, id: string) => unknown;
+};
+const CjsRecordId = cjsSurreal.RecordId;
+
 type CalendarRow = {
 	id: string | RecordId;
 	owner: unknown;
@@ -178,6 +183,29 @@ describe('live query record-id equality suite', () => {
 			new RecordId('account', 'x'),
 			profile?.id,
 		);
+
+		expect(rows.length).toBe(1);
+		expect(toRecordIdString(rows[0]?.owner as RecordId)).toBe('account:x');
+	});
+
+	it('matches eq(owner, profileId) with cross-runtime RecordId (CJS rhs)', async () => {
+		const cjsProfileId = new CjsRecordId('account', 'x');
+		expect(cjsProfileId instanceof RecordId).toBe(false);
+
+		const rows = await runOwnerMatchQuery(
+			new RecordId('account', 'x'),
+			cjsProfileId,
+		);
+
+		expect(rows.length).toBe(1);
+		expect(toRecordIdString(rows[0]?.owner as RecordId)).toBe('account:x');
+	});
+
+	it('matches eq(owner, profileId) with cross-runtime RecordId (CJS owner)', async () => {
+		const cjsOwner = new CjsRecordId('account', 'x');
+		expect(cjsOwner instanceof RecordId).toBe(false);
+
+		const rows = await runOwnerMatchQuery(cjsOwner, new RecordId('account', 'x'));
 
 		expect(rows.length).toBe(1);
 		expect(toRecordIdString(rows[0]?.owner as RecordId)).toBe('account:x');
