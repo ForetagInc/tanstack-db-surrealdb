@@ -19,6 +19,7 @@ import { LoroDoc } from 'loro-crdt';
 import { Features, RecordId, Table } from 'surrealdb';
 import { createLoroProfile } from './crdt';
 import {
+	asCanonicalRecordIdString,
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
 	toRecordId,
@@ -247,25 +248,27 @@ function defaultAad(ctx: AADContext): Uint8Array {
 const syncModeFrom = (syncMode: AdapterSyncMode | undefined): AdapterSyncMode =>
 	syncMode ?? 'eager';
 
-const subsetCacheKey = (subset: LoadSubsetOptions): string =>
-	JSON.stringify(subset, (_key, value) => {
-		if (value instanceof Date) return value.toISOString();
-		if (value instanceof RecordId) return toRecordIdString(value);
-		if (typeof value === 'function') return undefined;
-		if (
-			value &&
-			typeof value === 'object' &&
-			'table' in (value as Record<string, unknown>) &&
-			'id' in (value as Record<string, unknown>)
-		) {
-			try {
-				return toRecordIdString(String(value));
-			} catch {
-				return value;
+const subsetCacheKey = (subset: LoadSubsetOptions): string => {
+	const seen = new WeakSet<object>();
+	return (
+		JSON.stringify(subset, (_key, value) => {
+			if (value instanceof Date) return value.toISOString();
+			if (value instanceof RecordId) return toRecordIdString(value);
+			if (typeof value === 'bigint') return value.toString();
+			if (typeof value === 'function') return `[fn:${value.name || 'anonymous'}]`;
+
+			if (value && typeof value === 'object') {
+				const canonical = asCanonicalRecordIdString(value);
+				if (canonical) return canonical;
+
+				if (seen.has(value as object)) return '[Circular]';
+				seen.add(value as object);
 			}
-		}
-		return value;
-	});
+
+			return value;
+		}) ?? ''
+	);
+};
 
 type BaseSyncRuntime<T extends { id: string | RecordId }> = {
 	startRealtime: () => Promise<void>;

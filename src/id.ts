@@ -87,13 +87,6 @@ type SurrealRecordIdLike = {
 	table: unknown;
 	id: unknown;
 	toString: () => unknown;
-	constructor?: { name?: string };
-};
-
-const getCtorName = (value: unknown): string | undefined => {
-	if (!value || typeof value !== 'object') return undefined;
-	const ctor = (value as { constructor?: { name?: unknown } }).constructor;
-	return typeof ctor?.name === 'string' ? ctor.name : undefined;
 };
 
 const isCrossRuntimeRecordIdObject = (
@@ -104,10 +97,8 @@ const isCrossRuntimeRecordIdObject = (
 	}
 	const obj = value as Partial<SurrealRecordIdLike>;
 	if (typeof obj.toString !== 'function') return false;
+	if (obj.toString === Object.prototype.toString) return false;
 	if (!('table' in obj) || !('id' in obj)) return false;
-	const ctorName = getCtorName(value);
-	// SurrealDB instances can be RecordId/RecordId2/etc across CJS/ESM bundles.
-	if (!ctorName || !/^RecordId\d*$/.test(ctorName)) return false;
 
 	const tableValue = obj.table;
 	const table =
@@ -148,13 +139,19 @@ const asCanonicalRecordIdFromCrossRuntimeObject = (
 ): string | undefined => {
 	if (!isCrossRuntimeRecordIdObject(value)) return undefined;
 	const obj = value as SurrealRecordIdLike;
-	const tableRaw =
-		typeof obj.table === 'string' ? obj.table : String(obj.table);
-	const table = stripOuterQuotes(tableRaw).trim();
-	const id = String(obj.id);
-	const fromFields =
-		table && id && looksLikeTableName(table) ? `${table}:${id}` : undefined;
-	if (fromFields) return toCanonicalRecordIdString(fromFields);
+	const table =
+		typeof obj.table === 'string'
+			? stripOuterQuotes(obj.table).trim()
+			: undefined;
+	const id =
+		typeof obj.id === 'string' ||
+		typeof obj.id === 'number' ||
+		typeof obj.id === 'bigint'
+			? String(obj.id)
+			: undefined;
+	if (table && id && looksLikeTableName(table)) {
+		return toCanonicalRecordIdString(`${table}:${id}`);
+	}
 	return toCanonicalRecordIdString(String(obj.toString()));
 };
 
@@ -179,10 +176,15 @@ export const toNativeRecordIdLikeValue = (value: unknown): unknown => {
 	if (value instanceof RecordId) {
 		const canonical = asCanonicalRecordIdString(value);
 		if (!canonical) return value;
-		return getNativeRecordId(canonical);
+		recordIdIdentityPool.set(canonical, value);
+		nativeRecordIdPool.set(canonical, value);
+		return value;
 	}
 	const canonical = asCanonicalRecordIdString(value);
 	if (!canonical) return value;
+	if (isCrossRuntimeRecordIdObject(value)) {
+		recordIdIdentityPool.set(canonical, value);
+	}
 	return getNativeRecordId(canonical);
 };
 

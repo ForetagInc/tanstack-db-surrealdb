@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { createCollection, createLiveQueryCollection, eq } from '@tanstack/db';
 import { QueryClient } from '@tanstack/query-core';
 import { Features, RecordId, Surreal, Table } from 'surrealdb';
 
@@ -394,6 +395,56 @@ if (!integrationEnv) {
 		expect(toRecordKeyString(crossRuntimeRows[0]?.id as string | RecordId)).toBe(
 			'r1',
 		);
+	});
+
+	it('query-driven on-demand WHERE matches RecordId owners against real Surreal', async () => {
+		const tableName = createTableName('it_query_where_recordid');
+		createdTables.add(tableName);
+		await ensureTableSchema(db, tableName);
+		await db.query('DELETE type::table($table);', { table: tableName });
+
+		const ownerA = new RecordId('account', 'query-user-a');
+		const ownerB = new RecordId('account', 'query-user-b');
+		await db.insert(new Table(tableName), [
+			{
+				id: new RecordId(tableName, 'q1'),
+				title: 'One',
+				owner: ownerA,
+			},
+			{
+				id: new RecordId(tableName, 'q2'),
+				title: 'Two',
+				owner: ownerB,
+			},
+		]);
+
+		type Calendar = {
+			id: RecordId;
+			title: string;
+			owner: RecordId;
+		};
+
+		const queryClient = new QueryClient();
+		const calendars = createCollection(
+			surrealCollectionOptions<Calendar>({
+				db,
+				table: { name: tableName },
+				queryClient,
+				queryKey: [tableName, 'query-driven'],
+				syncMode: 'on-demand',
+			}),
+		);
+
+		const liveQuery = createLiveQueryCollection((query) =>
+			query
+				.from({ calendar: calendars })
+				.where(({ calendar }) => eq(calendar.owner, ownerA)),
+		);
+
+		await liveQuery.preload();
+		const nativeRows = liveQuery.toArray;
+		expect(nativeRows.length).toBe(1);
+		expect(toRecordKeyString(nativeRows[0]?.id as RecordId)).toBe('q1');
 	});
 	});
 }
