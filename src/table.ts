@@ -7,7 +7,11 @@ import {
 	type Surreal,
 	Table,
 } from 'surrealdb';
-import { normalizeRecordIdLikeValue, toNativeRecordIdLikeValue, toRecordId } from './id';
+import {
+	normalizeRecordIdLikeValue,
+	toNativeRecordIdLikeValue,
+	toRecordId,
+} from './id';
 import type { SurrealSubset, TableOptions } from './types';
 
 type QueryResult<T> = T[] | null;
@@ -64,9 +68,11 @@ const mapRelationPath = (path: FieldPath, relation?: boolean): FieldPath => {
 };
 
 const normalizeFilterValue = (value: unknown): unknown => {
-	if (Array.isArray(value)) {
+	if (Array.isArray(value))
 		return value.map((item) => normalizeFilterValue(item));
-	}
+	if (value && typeof value === 'object')
+		return normalizeRecordIdLikeValue(value);
+
 	const native = toNativeRecordIdLikeValue(value);
 	if (native !== value) return native;
 	return normalizeRecordIdLikeValue(value);
@@ -282,7 +288,8 @@ export function manageTable<T extends { id: string | RecordId }>(
 			if (action === 'KILLED') return;
 			if (action === 'CREATE') cb({ type: 'insert', row: value });
 			else if (action === 'UPDATE') cb({ type: 'update', row: value });
-			else if (action === 'DELETE') cb({ type: 'delete', row: { id: value.id } as T });
+			else if (action === 'DELETE')
+				cb({ type: 'delete', row: { id: value.id } as T });
 		};
 
 		const start = async () => {

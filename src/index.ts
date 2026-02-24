@@ -17,7 +17,7 @@ import type {
 import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { LoroDoc } from 'loro-crdt';
 import { Features, RecordId, Table } from 'surrealdb';
-
+import { createLoroProfile } from './crdt';
 import {
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
@@ -25,7 +25,6 @@ import {
 	toRecordIdString,
 	toRecordKeyString,
 } from './id';
-import { createLoroProfile } from './crdt';
 import { manageTable } from './table';
 import type {
 	AADContext,
@@ -38,12 +37,12 @@ import type {
 	TableLike,
 	TableOptions,
 } from './types';
-import { fromBytes, toBytes, fromBase64, toBase64 } from './util';
+import { fromBase64, fromBytes, toBase64, toBytes } from './util';
 
+export * from './crdt';
+export * from './encryption';
 export { toRecordKeyString } from './id';
 export * from './types';
-export * from './encryption';
-export * from './crdt';
 
 const TEMP_ID_PREFIX = '__temp__';
 const ENVELOPE_FIELDS = [
@@ -139,7 +138,9 @@ const isTempId = (id: string | RecordId, tableName: string): boolean => {
 	return key.startsWith(TEMP_ID_PREFIX);
 };
 
-const toEnvelope = (value: Record<string, unknown>): EncryptedEnvelope | null => {
+const toEnvelope = (
+	value: Record<string, unknown>,
+): EncryptedEnvelope | null => {
 	const version = value.version;
 	const algorithm = value.algorithm;
 	const keyId = value.key_id;
@@ -213,7 +214,11 @@ function createInsertSchema<T extends { id: string | RecordId }>(
 			version: 1,
 			vendor: 'tanstack-db-surrealdb',
 			validate: (value: unknown) => {
-				if (!value || typeof value !== 'object' || Array.isArray(value)) {
+				if (
+					!value ||
+					typeof value !== 'object' ||
+					Array.isArray(value)
+				) {
 					return {
 						issues: [{ message: 'Insert data must be an object.' }],
 					};
@@ -223,7 +228,8 @@ function createInsertSchema<T extends { id: string | RecordId }>(
 					...(value as Record<string, unknown>),
 				}) as MutationInput<T>;
 
-				if (!data.id) data.id = createTempRecordId(tableName) as T['id'];
+				if (!data.id)
+					data.id = createTempRecordId(tableName) as T['id'];
 
 				return { value: data as T };
 			},
@@ -238,9 +244,8 @@ function defaultAad(ctx: AADContext): Uint8Array {
 	return toBytes(`${ctx.table}:${base}:${ctx.id}`);
 }
 
-const syncModeFrom = (
-	syncMode: AdapterSyncMode | undefined,
-): AdapterSyncMode => syncMode ?? 'eager';
+const syncModeFrom = (syncMode: AdapterSyncMode | undefined): AdapterSyncMode =>
+	syncMode ?? 'eager';
 
 const subsetCacheKey = (subset: LoadSubsetOptions): string =>
 	JSON.stringify(subset, (_key, value) => {
@@ -288,7 +293,8 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	}
 
 	const syncMode = syncModeFrom(inputSyncMode);
-	const isOnDemandLike = syncMode === 'on-demand' || syncMode === 'progressive';
+	const isOnDemandLike =
+		syncMode === 'on-demand' || syncMode === 'progressive';
 	const isStrictOnDemand = syncMode === 'on-demand';
 	const queryDrivenSyncMode: 'eager' | 'on-demand' = isOnDemandLike
 		? 'on-demand'
@@ -365,8 +371,12 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		return toStoredEnvelope(envelope);
 	};
 
-	const updatesTableName = crdtEnabled ? tableNameOf(crdt.updatesTable) : undefined;
-	const updatesTable = crdtEnabled ? toTableResource(crdt.updatesTable) : undefined;
+	const updatesTableName = crdtEnabled
+		? tableNameOf(crdt.updatesTable)
+		: undefined;
+	const updatesTable = crdtEnabled
+		? toTableResource(crdt.updatesTable)
+		: undefined;
 	const snapshotsTableName =
 		crdtEnabled && crdt.snapshotsTable
 			? tableNameOf(crdt.snapshotsTable)
@@ -385,7 +395,8 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	};
 
 	const docRef = (id: string): RecordId => new RecordId(tableName, id);
-	const idFromDocRef = (doc: string | RecordId): string => toRecordKeyString(doc);
+	const idFromDocRef = (doc: string | RecordId): string =>
+		toRecordKeyString(doc);
 
 	const resolveActor = (
 		id: string,
@@ -419,7 +430,10 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		return e2ee.crypto.decrypt({
 			envelope,
 			aad: aadFor({
-				table: kind === 'snapshot' ? snapshotsTableName ?? tableName : updatesTableName ?? tableName,
+				table:
+					kind === 'snapshot'
+						? (snapshotsTableName ?? tableName)
+						: (updatesTableName ?? tableName),
 				baseTable: tableName,
 				id,
 				kind,
@@ -437,7 +451,8 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			return { update_bytes: toBase64(bytes) };
 		}
 
-		const targetTable = kind === 'snapshot' ? snapshotsTableName : updatesTableName;
+		const targetTable =
+			kind === 'snapshot' ? snapshotsTableName : updatesTableName;
 		const envelope = await e2ee.crypto.encrypt({
 			plaintext: bytes,
 			aad: aadFor({
@@ -593,7 +608,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		const ensureBaseLive = async () => {
 			if (cleanupBaseLive !== NOOP) return;
 			if (!db.isFeatureSupported?.(Features.LiveQueries)) return;
-			const live = (await db.live(tableResource)) as unknown as LiveSubscriptionLike;
+			const live = (await db.live(
+				tableResource,
+			)) as unknown as LiveSubscriptionLike;
 			if (killed) {
 				await live.kill();
 				return;
@@ -604,7 +621,12 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 				const id = toRecordKeyString(row.id as string | RecordId);
 
 				const wasVisible = activeOnDemandIds.has(id);
-				if (isStrictOnDemand && !wasVisible && message.action !== 'DELETE') return;
+				if (
+					isStrictOnDemand &&
+					!wasVisible &&
+					message.action !== 'DELETE'
+				)
+					return;
 
 				if (message.action === 'DELETE') {
 					for (const ids of subsetIds.values()) ids.delete(id);
@@ -612,7 +634,10 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 					if (isStrictOnDemand && !wasVisible) return;
 					ctx.begin();
 					try {
-						ctx.write({ type: 'delete', key: `${tableName}:${id}` });
+						ctx.write({
+							type: 'delete',
+							key: `${tableName}:${id}`,
+						});
 					} finally {
 						ctx.commit();
 					}
@@ -641,7 +666,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			if (cleanupUpdateLive !== NOOP) return;
 			if (!db.isFeatureSupported?.(Features.LiveQueries)) return;
 
-			const live = (await db.live(updatesTable)) as unknown as LiveSubscriptionLike;
+			const live = (await db.live(
+				updatesTable,
+			)) as unknown as LiveSubscriptionLike;
 			if (killed) {
 				await live.kill();
 				return;
@@ -702,7 +729,13 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			}
 
 			for (const id of ids) {
-				await hydrateCrdtDoc(id, ctx.write, ctx.begin, ctx.commit, 'insert');
+				await hydrateCrdtDoc(
+					id,
+					ctx.write,
+					ctx.begin,
+					ctx.commit,
+					'insert',
+				);
 			}
 			await ensureUpdateLive();
 		};
@@ -756,17 +789,23 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 
 				if (!crdtEnabled) {
 					if (!isOnDemandLike) {
-						const rows = await toRecordArray(await db.select(tableResource));
+						const rows = await toRecordArray(
+							await db.select(tableResource),
+						);
 						const decoded = await Promise.all(
-							rows.map((row) => decodeBaseRow(row as Record<string, unknown>)),
+							rows.map((row) =>
+								decodeBaseRow(row as Record<string, unknown>),
+							),
 						);
 						return decoded;
 					}
 
-					const rows = await tableAccess.loadSubset(meta?.loadSubsetOptions);
+					const rows = await tableAccess.loadSubset(
+						meta?.loadSubsetOptions,
+					);
 					const decoded = await Promise.all(
-						(rows as unknown as Array<Record<string, unknown>>).map((row) =>
-							decodeBaseRow(row),
+						(rows as unknown as Array<Record<string, unknown>>).map(
+							(row) => decodeBaseRow(row),
 						),
 					);
 					return decoded;
@@ -812,13 +851,18 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 					const recordPayload = await encodeBaseRow(payload, idKey);
 
 					if (isTempId(normalized.id, tableName)) {
-						const created = await db.create(tableResource).content(recordPayload);
+						const created = await db
+							.create(tableResource)
+							.content(recordPayload);
 						const createdRow = firstRow(
 							toRecordArray(created as unknown as T | T[]),
 						);
 						const createdId =
-							createdRow && (createdRow as Record<string, unknown>).id
-								? ((createdRow as Record<string, unknown>).id as string | RecordId)
+							createdRow &&
+							(createdRow as Record<string, unknown>).id
+								? ((createdRow as Record<string, unknown>).id as
+										| string
+										| RecordId)
 								: normalized.id;
 						const resolved = {
 							...normalized,
@@ -860,7 +904,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			const writeUtils = getWriteUtils(params.collection.utils);
 			for (const mutation of params.transaction.mutations) {
 				if (mutation.type !== 'update') continue;
-				const mutationId = normalizeMutationId(mutation.key as RecordId | string);
+				const mutationId = normalizeMutationId(
+					mutation.key as RecordId | string,
+				);
 				const normalizedModified = omitUndefined(
 					normalizeRecordIdLikeFields({
 						...(mutation.modified as Record<string, unknown>),
@@ -878,13 +924,13 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 						continue;
 					}
 
-						const current = await db.select(mutationId);
-						const currentRows = toRecordArray(
-							current as unknown as
-								| Record<string, unknown>
-								| Array<Record<string, unknown>>,
-						);
-						const currentRow = currentRows[0];
+					const current = await db.select(mutationId);
+					const currentRows = toRecordArray(
+						current as unknown as
+							| Record<string, unknown>
+							| Array<Record<string, unknown>>,
+					);
+					const currentRow = currentRows[0];
 					const decodedCurrent = currentRow
 						? await decodeBaseRow(currentRow)
 						: ({ id: mutationId } as T);
@@ -898,7 +944,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 						toRecordKeyString(mutationId),
 					);
 					await db.update(mutationId).merge(encoded);
-					writeUtils.writeUpsert?.(normalizeRow({ ...decodedCurrent, ...merged } as T));
+					writeUtils.writeUpsert?.(
+						normalizeRow({ ...decodedCurrent, ...merged } as T),
+					);
 					continue;
 				}
 
@@ -922,7 +970,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			const writeUtils = getWriteUtils(params.collection.utils);
 			for (const mutation of params.transaction.mutations) {
 				if (mutation.type !== 'delete') continue;
-				const mutationId = normalizeMutationId(mutation.key as RecordId | string);
+				const mutationId = normalizeMutationId(
+					mutation.key as RecordId | string,
+				);
 				const id = toRecordKeyString(mutationId);
 				if (!crdtEnabled) {
 					await db.delete(mutationId);
@@ -950,8 +1000,11 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		? {
 				sync: (ctx: Parameters<NonNullable<typeof baseSync>>[0]) => {
 					const canRunBaseSync =
-						typeof (ctx.collection as { on?: unknown })?.on === 'function';
-					const baseResult = canRunBaseSync ? baseSync(ctx) : undefined;
+						typeof (ctx.collection as { on?: unknown })?.on ===
+						'function';
+					const baseResult = canRunBaseSync
+						? baseSync(ctx)
+						: undefined;
 					const baseCleanup =
 						typeof baseResult === 'function'
 							? baseResult
@@ -969,7 +1022,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 										}
 									).cleanup
 								: NOOP;
-					const runtime = createSyncRuntime(ctx as Parameters<SyncConfig<T>['sync']>[0]);
+					const runtime = createSyncRuntime(
+						ctx as Parameters<SyncConfig<T>['sync']>[0],
+					);
 
 					const start = async () => {
 						if (!isOnDemandLike) {
@@ -977,7 +1032,13 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 								const rows = toRecordArray(
 									await db.select(tableResource),
 								) as Array<Record<string, unknown>>;
-								await hydratePlainRows(rows, ctx.write, ctx.begin, ctx.commit, 'insert');
+								await hydratePlainRows(
+									rows,
+									ctx.write,
+									ctx.begin,
+									ctx.commit,
+									'insert',
+								);
 								await runtime.startRealtime();
 								ctx.markReady();
 								return;
@@ -992,7 +1053,10 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 								for (const update of updates) {
 									const id = idFromDocRef(update.doc);
 									const doc = getDoc(id);
-									const bytes = await decodeUpdateBytes(update, 'update');
+									const bytes = await decodeUpdateBytes(
+										update,
+										'update',
+									);
 									if (!bytes.byteLength) continue;
 									doc.import(bytes);
 								}
@@ -1001,7 +1065,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 									for (const [id, doc] of docs.entries()) {
 										ctx.write({
 											type: 'insert',
-											value: normalizeRow(materializeCrdt(doc, id)),
+											value: normalizeRow(
+												materializeCrdt(doc, id),
+											),
 										});
 									}
 								} finally {
@@ -1015,7 +1081,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 
 						ctx.markReady();
 						if (syncMode === 'progressive') {
-							void runtime.loadSubset({}).catch((error) => onError?.(error));
+							void runtime
+								.loadSubset({})
+								.catch((error) => onError?.(error));
 						}
 					};
 
@@ -1034,7 +1102,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 						},
 					};
 				},
-		  }
+			}
 		: undefined;
 
 	return {
@@ -1043,9 +1111,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	} as SurrealCollectionOptionsReturn<T>;
 }
 
-export function surrealCollectionOptions<
-	T extends SyncedTable<object>,
->(
+export function surrealCollectionOptions<T extends SyncedTable<object>>(
 	config: SurrealCollectionOptions<T>,
 ): CollectionConfig<
 	T,

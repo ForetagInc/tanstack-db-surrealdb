@@ -3,6 +3,11 @@ import { DateTime, RecordId } from 'surrealdb';
 
 import { manageTable } from '../src/table';
 
+const cjsSurreal = require('surrealdb') as {
+	RecordId: new (table: string, id: string) => unknown;
+};
+const CjsRecordId = cjsSurreal.RecordId;
+
 type Product = {
 	id: string | RecordId;
 	name?: string;
@@ -108,5 +113,30 @@ describe('manageTable', () => {
 		expect(payload.end_at).toBe(asDate);
 		expect(payload.due_at).toBe(asSurrealDate);
 		expect(payload.due_at instanceof DateTime).toBe(true);
+	});
+
+	it('preserves cross-runtime RecordId objects in where bindings', async () => {
+		const ref = (field: string) => ({ type: 'ref', path: [field] }) as const;
+		const val = (value: unknown) => ({ type: 'val', value }) as const;
+		const eqExpr = (field: string, value: unknown) =>
+			({ type: 'func', name: 'eq', args: [ref(field), val(value)] }) as const;
+		const state: {
+			queries: Array<{ sql: string; params: Record<string, unknown> }>;
+		} = { queries: [] };
+		const db = {
+			query: async (sql: string, params: Record<string, unknown>) => {
+				state.queries.push({ sql, params });
+				return [[]];
+			},
+		};
+
+		const foreignRid = new CjsRecordId('profile', 'abc');
+		const table = manageTable<Product>(db as never, { name: 'products' });
+		await table.loadSubset({
+			where: eqExpr('owner', foreignRid) as never,
+		});
+
+		expect(state.queries[0]?.sql).toContain('WHERE (owner = $p0)');
+		expect(state.queries[0]?.params.p0).toBe(foreignRid);
 	});
 });
