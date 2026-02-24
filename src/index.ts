@@ -22,6 +22,7 @@ import {
 	asCanonicalRecordIdString,
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
+	preferRecordIdLikeIdentityDeep,
 	toRecordId,
 	toRecordIdString,
 	toRecordKeyString,
@@ -270,6 +271,39 @@ const subsetCacheKey = (subset: LoadSubsetOptions): string => {
 	);
 };
 
+const normalizeSubsetValuesInPlace = (
+	value: unknown,
+	seen: WeakSet<object> = new WeakSet<object>(),
+): void => {
+	if (Array.isArray(value)) {
+		for (const entry of value) normalizeSubsetValuesInPlace(entry, seen);
+		return;
+	}
+
+	if (!value || typeof value !== 'object') return;
+	if (seen.has(value as object)) return;
+	seen.add(value as object);
+	const obj = value as Record<string, unknown>;
+
+	if (obj.type === 'val' && 'value' in obj) {
+		obj.value = preferRecordIdLikeIdentityDeep(obj.value);
+	}
+
+	for (const child of Object.values(obj)) {
+		normalizeSubsetValuesInPlace(child, seen);
+	}
+};
+
+const primeRecordIdIdentityFromSubset = (
+	subset?: LoadSubsetOptions,
+): void => {
+	if (!subset) return;
+	normalizeSubsetValuesInPlace(subset);
+	// Seed record-id identity pool from predicate values so eager-mode
+	// in-memory eq(...) sees the same instance references.
+	preferRecordIdLikeIdentityDeep(subset);
+};
+
 type BaseSyncRuntime<T extends { id: string | RecordId }> = {
 	startRealtime: () => Promise<void>;
 	cleanup: () => void;
@@ -299,9 +333,10 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	const isOnDemandLike =
 		syncMode === 'on-demand' || syncMode === 'progressive';
 	const isStrictOnDemand = syncMode === 'on-demand';
-	const queryDrivenSyncMode: 'eager' | 'on-demand' = isOnDemandLike
-		? 'on-demand'
-		: 'eager';
+	// Keep query-driven predicates on subset transport so where(...) paths
+	// can be normalized and pushed down reliably.
+	const queryDrivenSyncMode: 'eager' | 'on-demand' = 'on-demand';
+	const queryDrivenUsesSubsets = queryDrivenSyncMode === 'on-demand';
 	const tableOptions = toTableOptions(table);
 	const tableName = tableOptions.name;
 	const tableResource = toTableResource(table);
@@ -708,7 +743,8 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		};
 
 		const loadSubset = async (subset: LoadSubsetOptions) => {
-			if (!isOnDemandLike) return;
+			if (!queryDrivenUsesSubsets) return;
+			primeRecordIdIdentityFromSubset(subset);
 			const key = subsetCacheKey(subset);
 			const rows = await tableAccess.loadSubset(subset);
 			const ids = new Set(
@@ -744,7 +780,8 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		};
 
 		const unloadSubset = (subset: LoadSubsetOptions) => {
-			if (!isOnDemandLike) return;
+			if (!queryDrivenUsesSubsets) return;
+			primeRecordIdIdentityFromSubset(subset);
 			const key = subsetCacheKey(subset);
 			subsetIds.delete(key);
 			updateActiveOnDemandIds();
@@ -786,12 +823,14 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		syncMode: queryDrivenSyncMode,
 		queryFn: async ({ meta }) => {
 			try {
-				if (isOnDemandLike && !meta?.loadSubsetOptions) {
+				primeRecordIdIdentityFromSubset(meta?.loadSubsetOptions);
+
+				if (queryDrivenUsesSubsets && !meta?.loadSubsetOptions) {
 					return [] as T[];
 				}
 
 				if (!crdtEnabled) {
-					if (!isOnDemandLike) {
+					if (!queryDrivenUsesSubsets) {
 						const rows = await toRecordArray(
 							await db.select(tableResource),
 						);
@@ -814,7 +853,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 					return decoded;
 				}
 
-				if (isOnDemandLike) return [] as T[];
+				if (queryDrivenUsesSubsets) return [] as T[];
 
 				if (!updatesTableName) return [] as T[];
 				const updates = await queryRows<CRDTUpdateRow>(
