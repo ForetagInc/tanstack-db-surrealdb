@@ -22,6 +22,11 @@ type SyncWrite = {
 	key?: string;
 };
 
+const cjsSurreal = require('surrealdb') as {
+	RecordId: new (table: string, id: string) => unknown;
+};
+const CjsRecordId = cjsSurreal.RecordId;
+
 const loadIntegrationEnv = (): IntegrationEnv | null => {
 	const url = process.env.SURREAL_URL;
 	if (!url) return null;
@@ -102,6 +107,7 @@ const ensureTableSchema = async (db: Surreal, tableName: string) => {
 	await db.query(`DEFINE FIELD name ON ${safe} TYPE option<string>;`);
 	await db.query(`DEFINE FIELD category ON ${safe} TYPE option<string>;`);
 	await db.query(`DEFINE FIELD title ON ${safe} TYPE option<string>;`);
+	await db.query(`DEFINE FIELD owner ON ${safe} TYPE option<record<account>>;`);
 };
 
 const dropTable = async (db: Surreal, tableName: string) => {
@@ -344,6 +350,50 @@ if (!integrationEnv) {
 		);
 
 		cleanupSyncResult(syncResult);
+	});
+
+	it('filters rows by RecordId in WHERE (native + cross-runtime)', async () => {
+		const tableName = createTableName('it_where_recordid');
+		createdTables.add(tableName);
+		await ensureTableSchema(db, tableName);
+		await db.query('DELETE type::table($table);', { table: tableName });
+
+		const ownerA = new RecordId('account', 'user-a');
+		const ownerB = new RecordId('account', 'user-b');
+		await db.insert(new Table(tableName), [
+			{
+				id: new RecordId(tableName, 'r1'),
+				title: 'One',
+				owner: ownerA,
+			},
+			{
+				id: new RecordId(tableName, 'r2'),
+				title: 'Two',
+				owner: ownerB,
+			},
+		]);
+
+		type Item = { id: string | RecordId; title: string; owner: RecordId };
+		const table = manageTable<Item>(db as never, { name: tableName });
+		const ref = (field: string) => ({ type: 'ref', path: [field] }) as const;
+		const val = (value: unknown) => ({ type: 'val', value }) as const;
+		const eqExpr = (field: string, value: unknown) =>
+			({ type: 'func', name: 'eq', args: [ref(field), val(value)] }) as const;
+
+		const nativeRows = await table.loadSubset({
+			where: eqExpr('owner', ownerA) as never,
+		});
+		expect(nativeRows.length).toBe(1);
+		expect(toRecordKeyString(nativeRows[0]?.id as string | RecordId)).toBe('r1');
+
+		const foreignOwnerA = new CjsRecordId('account', 'user-a');
+		const crossRuntimeRows = await table.loadSubset({
+			where: eqExpr('owner', foreignOwnerA) as never,
+		});
+		expect(crossRuntimeRows.length).toBe(1);
+		expect(toRecordKeyString(crossRuntimeRows[0]?.id as string | RecordId)).toBe(
+			'r1',
+		);
 	});
 	});
 }

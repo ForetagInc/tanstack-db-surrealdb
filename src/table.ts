@@ -70,11 +70,13 @@ const mapRelationPath = (path: FieldPath, relation?: boolean): FieldPath => {
 const normalizeFilterValue = (value: unknown): unknown => {
 	if (Array.isArray(value))
 		return value.map((item) => normalizeFilterValue(item));
-	if (value && typeof value === 'object')
-		return normalizeRecordIdLikeValue(value);
 
 	const native = toNativeRecordIdLikeValue(value);
 	if (native !== value) return native;
+
+	if (value && typeof value === 'object')
+		return normalizeRecordIdLikeValue(value);
+
 	return normalizeRecordIdLikeValue(value);
 };
 

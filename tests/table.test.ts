@@ -115,7 +115,7 @@ describe('manageTable', () => {
 		expect(payload.due_at instanceof DateTime).toBe(true);
 	});
 
-	it('preserves cross-runtime RecordId objects in where bindings', async () => {
+	it('normalizes cross-runtime RecordId objects to native RecordId in where bindings', async () => {
 		const ref = (field: string) => ({ type: 'ref', path: [field] }) as const;
 		const val = (value: unknown) => ({ type: 'val', value }) as const;
 		const eqExpr = (field: string, value: unknown) =>
@@ -137,6 +137,7 @@ describe('manageTable', () => {
 		});
 
 		expect(state.queries[0]?.sql).toContain('WHERE (owner = $p0)');
-		expect(state.queries[0]?.params.p0).toBe(foreignRid);
+		expect(state.queries[0]?.params.p0 instanceof RecordId).toBe(true);
+		expect(String(state.queries[0]?.params.p0)).toBe('profile:abc');
 	});
 });
