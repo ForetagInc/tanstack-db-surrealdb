@@ -1,4 +1,4 @@
-import { surrealCollectionOptions } from '../dist';
+import { surrealCollectionOptions } from '../src';
 
 import { eq } from '@tanstack/db';
 import { Surreal } from 'surrealdb';
@@ -22,7 +22,7 @@ const productsCollection = createCollection(
 		db,
 		queryKey: ['products'],
 		queryClient,
-		syncMode: 'on-demand', // [Optional] 'eager' | 'on-demand' - defaults to 'eager'
+		syncMode: 'on-demand', // [Optional] defaults to 'eager'
 		table: { name: 'products' },
 	}),
 );

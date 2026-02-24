@@ -1,17 +1,19 @@
-import type { Bytes } from '../types';
+import type { Bytes, EncryptedEnvelope } from '../types';
+
+export type EncryptInput = {
+	plaintext: Bytes;
+	aad?: Bytes;
+	v?: number;
+	alg?: string;
+	kid?: string;
+};
+
+export type DecryptInput = {
+	envelope: EncryptedEnvelope;
+	aad?: Bytes;
+};
 
 export interface CryptoProvider {
-	encrypt(
-		plaintext: Bytes,
-		aad?: Bytes,
-	): Promise<{ ciphertext: Bytes; nonce: Bytes; version: number }>;
-
-	decrypt(
-		payload: {
-			ciphertext: Bytes;
-			nonce: Bytes;
-			version: number;
-		},
-		aad?: Bytes,
-	): Promise<Bytes>;
+	encrypt(input: EncryptInput): Promise<EncryptedEnvelope>;
+	decrypt(input: DecryptInput): Promise<Bytes>;
 }

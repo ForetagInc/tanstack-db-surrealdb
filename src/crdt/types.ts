@@ -1,17 +1,7 @@
 import type { LoroDoc } from 'loro-crdt';
-import type { Table } from 'surrealdb';
-import type { Bytes } from '../types';
+import type { LocalChange } from '../types';
 
-export interface LoroDocLike {
-	importUpdate(update: LoroDoc): void;
-	exportUpdate(): Bytes;
-	exportSnapshot(): Bytes;
-}
-
-export interface CRDTConfig<TItem extends object> {
-	enabled: boolean;
-
-	updatesTables: Table;
-
-	createDoc: (id: string) => LoroDocLike;
+export interface CRDTProfileAdapter<T extends object> {
+	materialize: (doc: LoroDoc, id: string) => T;
+	applyLocalChange: (doc: LoroDoc, change: LocalChange<T>) => void;
 }

@@ -4,9 +4,11 @@ import type { Bytes } from './types';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export function toBytes<T extends string | JSON>(value: T): Bytes {
+const hasBuffer = typeof Buffer !== 'undefined';
+
+export function toBytes(value: string | object): Bytes {
 	if (typeof value === 'string') return encoder.encode(value);
-	if (typeof value === 'object') return encoder.encode(JSON.stringify(value));
+	return encoder.encode(JSON.stringify(value));
 }
 
 export function fromBytes<T>(bytes: Bytes, deserialize = false): T | string {
@@ -15,10 +17,12 @@ export function fromBytes<T>(bytes: Bytes, deserialize = false): T | string {
 }
 
 export function toBase64(bytes: Bytes): string {
+	if (hasBuffer) return Buffer.from(bytes).toString('base64');
 	return btoa(String.fromCharCode(...bytes));
 }
 
 export function fromBase64(base64: string): Bytes {
+	if (hasBuffer) return new Uint8Array(Buffer.from(base64, 'base64'));
 	const bin = atob(base64);
 	const out = new Uint8Array(bin.length);
 	for (let i = 0; i < bin.length; i++) {
@@ -38,7 +42,6 @@ export function surrealActionMapType(
 		case 'DELETE':
 			return 'delete';
 		default:
-			// KILLED handled elsewhere
 			return 'update';
 	}
 }
