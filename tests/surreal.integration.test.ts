@@ -447,53 +447,62 @@ if (!integrationEnv) {
 		expect(toRecordKeyString(nativeRows[0]?.id as RecordId)).toBe('q1');
 	});
 
-	it('query-driven eager WHERE matches RecordId owners against real Surreal', async () => {
-		const tableName = createTableName('it_query_where_recordid_eager');
-		createdTables.add(tableName);
-		await ensureTableSchema(db, tableName);
-		await db.query('DELETE type::table($table);', { table: tableName });
+		it('query-driven eager keeps RecordId WHERE matches after dependency transition', async () => {
+			const tableName = createTableName('it_query_where_recordid_eager');
+			createdTables.add(tableName);
+			await ensureTableSchema(db, tableName);
+			await db.query('DELETE type::table($table);', { table: tableName });
 
-		const ownerA = new RecordId('account', 'query-user-a');
-		const ownerB = new RecordId('account', 'query-user-b');
-		await db.insert(new Table(tableName), [
-			{
-				id: new RecordId(tableName, 'q1'),
-				title: 'One',
-				owner: ownerA,
-			},
-			{
-				id: new RecordId(tableName, 'q2'),
-				title: 'Two',
-				owner: ownerB,
-			},
-		]);
+			const ownerA = new RecordId('account', 'query-user-a');
+			const ownerB = new RecordId('account', 'query-user-b');
+			await db.insert(new Table(tableName), [
+				{
+					id: new RecordId(tableName, 'q1'),
+					title: 'One',
+					owner: ownerA,
+				},
+				{
+					id: new RecordId(tableName, 'q2'),
+					title: 'Two',
+					owner: ownerB,
+				},
+			]);
 
-		type Calendar = {
-			id: RecordId;
-			title: string;
-			owner: RecordId;
-		};
+			type Calendar = {
+				id: RecordId;
+				title: string;
+				owner: RecordId;
+			};
 
-		const calendars = createCollection(
-			surrealCollectionOptions<Calendar>({
-				db,
-				table: { name: tableName },
-				queryClient: new QueryClient(),
-				queryKey: [tableName, 'query-driven-eager'],
-				syncMode: 'eager',
-			}),
-		);
+			const calendars = createCollection(
+				surrealCollectionOptions<Calendar>({
+					db,
+					table: { name: tableName },
+					queryClient: new QueryClient(),
+					queryKey: [tableName, 'query-driven-eager'],
+					syncMode: 'eager',
+				}),
+			);
 
-		const liveQuery = createLiveQueryCollection((query) =>
-			query
-				.from({ calendar: calendars })
-				.where(({ calendar }) => eq(calendar.owner, ownerA)),
-		);
+			// Step 1: mirror initial render where profile?.id is undefined.
+			const unfilteredQuery = createLiveQueryCollection((query) =>
+				query.from({ calendar: calendars }),
+			);
+			await unfilteredQuery.preload();
+			expect(unfilteredQuery.toArray.length).toBe(2);
 
-		await liveQuery.preload();
-		const rows = liveQuery.toArray;
-		expect(rows.length).toBe(1);
-		expect(toRecordKeyString(rows[0]?.id as RecordId)).toBe('q1');
-	});
+			// Step 2: mirror re-render with deps update and a fresh RecordId instance.
+			const profileId = new RecordId('account', 'query-user-a');
+			const liveQuery = createLiveQueryCollection((query) =>
+				query
+					.from({ calendar: calendars })
+					.where(({ calendar }) => eq(calendar.owner, profileId)),
+			);
+
+			await liveQuery.preload();
+			const rows = liveQuery.toArray;
+			expect(rows.length).toBe(1);
+			expect(toRecordKeyString(rows[0]?.id as RecordId)).toBe('q1');
+		});
 	});
 }

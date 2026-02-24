@@ -22,6 +22,7 @@ import {
 	asCanonicalRecordIdString,
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
+	preferRecordIdLikeIdentity,
 	preferRecordIdLikeIdentityDeep,
 	toRecordId,
 	toRecordIdString,
@@ -271,37 +272,144 @@ const subsetCacheKey = (subset: LoadSubsetOptions): string => {
 	);
 };
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' &&
+	value !== null &&
+	Object.getPrototypeOf(value) === Object.prototype;
+
 const normalizeSubsetValuesInPlace = (
 	value: unknown,
 	seen: WeakSet<object> = new WeakSet<object>(),
-): void => {
+	preferredByCanonical: Map<string, unknown> = new Map(),
+): Map<string, unknown> => {
 	if (Array.isArray(value)) {
-		for (const entry of value) normalizeSubsetValuesInPlace(entry, seen);
-		return;
+		for (const entry of value) {
+			normalizeSubsetValuesInPlace(entry, seen, preferredByCanonical);
+		}
+		return preferredByCanonical;
 	}
 
-	if (!value || typeof value !== 'object') return;
-	if (seen.has(value as object)) return;
+	if (!value || typeof value !== 'object') return preferredByCanonical;
+	if (seen.has(value as object)) return preferredByCanonical;
 	seen.add(value as object);
 	const obj = value as Record<string, unknown>;
 
 	if (obj.type === 'val' && 'value' in obj) {
-		obj.value = preferRecordIdLikeIdentityDeep(obj.value);
+		const canonical = asCanonicalRecordIdString(obj.value);
+		if (canonical) {
+			const preferred = preferRecordIdLikeIdentity(obj.value);
+			obj.value = preferred;
+			preferredByCanonical.set(canonical, preferred);
+		} else {
+			obj.value = preferRecordIdLikeIdentityDeep(obj.value);
+		}
 	}
 
 	for (const child of Object.values(obj)) {
-		normalizeSubsetValuesInPlace(child, seen);
+		normalizeSubsetValuesInPlace(child, seen, preferredByCanonical);
 	}
+
+	return preferredByCanonical;
 };
 
 const primeRecordIdIdentityFromSubset = (
 	subset?: LoadSubsetOptions,
+): Map<string, unknown> => {
+	if (!subset) return new Map();
+	return normalizeSubsetValuesInPlace(subset);
+};
+
+const rebindRecordIdIdentityDeep = (
+	value: unknown,
+	preferredByCanonical: Map<string, unknown>,
+): { value: unknown; changed: boolean } => {
+	const canonical = asCanonicalRecordIdString(value);
+	if (canonical && preferredByCanonical.has(canonical)) {
+		const preferred = preferredByCanonical.get(canonical);
+		return {
+			value: preferred,
+			changed: value !== preferred,
+		};
+	}
+
+	if (Array.isArray(value)) {
+		let changed = false;
+		const out = value.map((entry) => {
+			const rebound = rebindRecordIdIdentityDeep(
+				entry,
+				preferredByCanonical,
+			);
+			changed = changed || rebound.changed;
+			return rebound.value;
+		});
+		return changed ? { value: out, changed: true } : { value, changed: false };
+	}
+
+	if (!isPlainObject(value)) return { value, changed: false };
+
+	let changed = false;
+	const out: Record<string, unknown> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		const rebound = rebindRecordIdIdentityDeep(entry, preferredByCanonical);
+		if (rebound.changed) changed = true;
+		out[key] = rebound.value;
+	}
+	return changed ? { value: out, changed: true } : { value, changed: false };
+};
+
+const applyPreferredRecordIdIdentityToCollection = <
+	T extends { id: string | RecordId },
+>(
+	ctx: Parameters<SyncConfig<T>['sync']>[0],
+	preferredByCanonical: Map<string, unknown>,
 ): void => {
-	if (!subset) return;
-	normalizeSubsetValuesInPlace(subset);
-	// Seed record-id identity pool from predicate values so eager-mode
-	// in-memory eq(...) sees the same instance references.
-	preferRecordIdLikeIdentityDeep(subset);
+	if (!preferredByCanonical.size) return;
+	const collection = ctx.collection as {
+		entries?: () => Iterable<[string | number, T]>;
+	};
+	if (!collection || typeof collection.entries !== 'function') return;
+
+	const rebound: T[] = [];
+	for (const [, row] of collection.entries()) {
+		const updated = rebindRecordIdIdentityDeep(row, preferredByCanonical);
+		if (!updated.changed) continue;
+		rebound.push(updated.value as T);
+	}
+	if (!rebound.length) return;
+
+	ctx.begin();
+	try {
+		for (const row of rebound) {
+			// Force index recalculation for RecordId identity rebinding.
+			// A plain update can be treated as deep-equal for RecordId objects
+			// (no enumerable fields), which skips index updates in TanStack DB.
+			ctx.write({
+				type: 'delete',
+				value: { id: row.id } as unknown as T,
+			});
+			ctx.write({ type: 'insert', value: row });
+		}
+	} finally {
+		ctx.commit();
+	}
+	const collectionWithInternals = collection as {
+		_indexes?: {
+			indexes?: Map<
+				number,
+				{ build?: (entries: Iterable<[string | number, T]>) => void }
+			>;
+		};
+		_state?: {
+			entries?: () => Iterable<[string | number, T]>;
+		};
+	};
+	const entries = collectionWithInternals._state?.entries?.();
+	const indexes = collectionWithInternals._indexes?.indexes;
+	if (entries && indexes) {
+		for (const index of indexes.values()) {
+			index.build?.(entries);
+		}
+	}
 };
 
 type BaseSyncRuntime<T extends { id: string | RecordId }> = {
@@ -744,7 +852,11 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 
 		const loadSubset = async (subset: LoadSubsetOptions) => {
 			if (!queryDrivenUsesSubsets) return;
-			primeRecordIdIdentityFromSubset(subset);
+			const preferredFromSubset = primeRecordIdIdentityFromSubset(subset);
+			// In eager paths, local where(eq(...)) filtering runs before async subset
+			// fetches resolve. Rebind matching RecordIds synchronously so predicates
+			// compare against stable identities, not object references from earlier loads.
+			applyPreferredRecordIdIdentityToCollection(ctx, preferredFromSubset);
 			const key = subsetCacheKey(subset);
 			const rows = await tableAccess.loadSubset(subset);
 			const ids = new Set(
