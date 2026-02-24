@@ -190,6 +190,46 @@ DEFINE INDEX crdt_doc_ts ON crdt_update FIELDS doc, ts;
 
 If a single `crdt_update` table is shared across multiple base tables, use a union type such as `record<doc> | record<sheet>`.
 
+## Permissions Templates
+
+The adapter does not manage Surreal table permissions. Define them in schema.
+
+### E2EE-only table permissions
+
+```sql
+DEFINE TABLE secret_note SCHEMAFULL
+	PERMISSIONS
+		FOR select, create, update, delete WHERE owner = $auth.id;
+```
+
+### CRDT updates table permissions (append-only)
+
+```sql
+DEFINE TABLE crdt_update SCHEMAFULL
+	PERMISSIONS
+		FOR select, create WHERE owner = $auth.id
+		FOR update, delete NONE;
+
+-- Add owner metadata on update rows for simple ACL checks
+DEFINE FIELD owner ON crdt_update TYPE record<account>;
+DEFINE INDEX crdt_owner_doc_ts ON crdt_update FIELDS owner, doc, ts;
+```
+
+### CRDT snapshots table permissions
+
+```sql
+DEFINE TABLE crdt_snapshot SCHEMAFULL
+	PERMISSIONS
+		FOR select WHERE owner = $auth.id
+		FOR create, update, delete NONE;
+
+-- Common pattern: clients read snapshots; only trusted backend writes/prunes them
+DEFINE FIELD owner ON crdt_snapshot TYPE record<account>;
+DEFINE INDEX snap_owner_doc_ts ON crdt_snapshot FIELDS owner, doc, ts;
+```
+
+If you run snapshot compaction from a trusted backend/service account, grant create/delete to that account only.
+
 ## Usage Snippets
 
 ### E2EE-only secret table
