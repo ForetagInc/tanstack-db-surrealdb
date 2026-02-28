@@ -59,6 +59,14 @@ const NOOP = () => {};
 
 type Cleanup = () => void;
 
+type DeletePatchableCollection = {
+	state: Map<unknown, unknown>;
+	delete: (
+		keys: unknown[] | unknown,
+		config?: OperationConfig,
+	) => Transaction<unknown>;
+};
+
 type MutationInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
 	id?: T['id'];
 };
@@ -66,6 +74,43 @@ type MutationInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
 type QueryWriteUtils = {
 	writeUpsert?: (data: unknown) => void;
 	writeDelete?: (key: string) => void;
+};
+
+const patchedCollections = new WeakSet<object>();
+
+const normalizeDeleteKeyAgainstState = (
+	state: Map<unknown, unknown>,
+	key: unknown,
+): unknown => {
+	if (state.has(key)) return key;
+	const canonical = asCanonicalRecordIdString(key);
+	if (!canonical) return key;
+	return state.has(canonical) ? canonical : key;
+};
+
+const patchCollectionDeleteForRecordIds = (collection: unknown) => {
+	if (!collection || typeof collection !== 'object') return;
+	if (patchedCollections.has(collection)) return;
+	const candidate = collection as Partial<DeletePatchableCollection>;
+	if (typeof candidate.delete !== 'function') return;
+	const originalDelete = candidate.delete.bind(collection);
+	Object.defineProperty(collection, 'delete', {
+		configurable: true,
+		writable: true,
+		value: (
+			keys: unknown[] | unknown,
+			config?: OperationConfig,
+		): Transaction<unknown> => {
+			const state =
+				(collection as DeletePatchableCollection).state ??
+				new Map<unknown, unknown>();
+			const normalizedKeys = Array.isArray(keys)
+				? keys.map((key) => normalizeDeleteKeyAgainstState(state, key))
+				: normalizeDeleteKeyAgainstState(state, keys);
+			return originalDelete(normalizedKeys, config);
+		},
+	});
+	patchedCollections.add(collection);
 };
 
 type CRDTUpdateRow = {
@@ -257,7 +302,8 @@ const subsetCacheKey = (subset: LoadSubsetOptions): string => {
 			if (value instanceof Date) return value.toISOString();
 			if (value instanceof RecordId) return toRecordIdString(value);
 			if (typeof value === 'bigint') return value.toString();
-			if (typeof value === 'function') return `[fn:${value.name || 'anonymous'}]`;
+			if (typeof value === 'function')
+				return `[fn:${value.name || 'anonymous'}]`;
 
 			if (value && typeof value === 'object') {
 				const canonical = asCanonicalRecordIdString(value);
@@ -342,7 +388,9 @@ const rebindRecordIdIdentityDeep = (
 			changed = changed || rebound.changed;
 			return rebound.value;
 		});
-		return changed ? { value: out, changed: true } : { value, changed: false };
+		return changed
+			? { value: out, changed: true }
+			: { value, changed: false };
 	}
 
 	if (!isPlainObject(value)) return { value, changed: false };
@@ -856,7 +904,10 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			// In eager paths, local where(eq(...)) filtering runs before async subset
 			// fetches resolve. Rebind matching RecordIds synchronously so predicates
 			// compare against stable identities, not object references from earlier loads.
-			applyPreferredRecordIdIdentityToCollection(ctx, preferredFromSubset);
+			applyPreferredRecordIdIdentityToCollection(
+				ctx,
+				preferredFromSubset,
+			);
 			const key = subsetCacheKey(subset);
 			const rows = await tableAccess.loadSubset(subset);
 			const ids = new Set(
@@ -1153,6 +1204,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	const sync = baseSync
 		? {
 				sync: (ctx: Parameters<NonNullable<typeof baseSync>>[0]) => {
+					patchCollectionDeleteForRecordIds(ctx.collection);
 					const canRunBaseSync =
 						typeof (ctx.collection as { on?: unknown })?.on ===
 						'function';
@@ -1290,6 +1342,6 @@ declare module '@tanstack/db' {
 		delete(
 			keys: Array<TKey | RecordId | string> | TKey | RecordId | string,
 			config?: OperationConfig,
-		): Transaction<any>;
+		): Transaction<unknown>;
 	}
 }
