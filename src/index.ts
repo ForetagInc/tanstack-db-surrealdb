@@ -64,7 +64,7 @@ type DeletePatchableCollection = {
 	delete: (
 		keys: unknown[] | unknown,
 		config?: OperationConfig,
-	) => Transaction<unknown>;
+	) => Transaction<Record<string, never>>;
 };
 
 type MutationInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
@@ -100,7 +100,7 @@ const patchCollectionDeleteForRecordIds = (collection: unknown) => {
 		value: (
 			keys: unknown[] | unknown,
 			config?: OperationConfig,
-		): Transaction<unknown> => {
+		): Transaction<Record<string, never>> => {
 			const state =
 				(collection as DeletePatchableCollection).state ??
 				new Map<unknown, unknown>();
@@ -1342,6 +1342,6 @@ declare module '@tanstack/db' {
 		delete(
 			keys: Array<TKey | RecordId | string> | TKey | RecordId | string,
 			config?: OperationConfig,
-		): Transaction<unknown>;
+		): Transaction<Record<string, never>>;
 	}
 }
