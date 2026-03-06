@@ -8,6 +8,10 @@ TanStack DB collection adapter for SurrealDB JS with:
 - Optional Loro CRDT replication (`json`, `richtext`)
 - Query-driven sync modes (`eager`, `on-demand`, `progressive`)
 
+### Roadmap
+
+- Persistence: [Issue](https://github.com/TanStack/db/issues/865)
+
 ## Install
 
 ```sh
@@ -283,6 +287,7 @@ type CalendarEvent = {
 };
 
 await calendarEvents.insert({
+  // id is Optional on insert
   id: new RecordId('calendar_event', 'evt-001'),
   owner: new RecordId('account', 'user-123'),
   title: 'Planning',
