@@ -42,7 +42,7 @@
 		"test:integration": "bun test tests/surreal.integration.test.ts"
 	},
 	"dependencies": {
-		"loro-crdt": "^1.10.6"
+		"loro-crdt": "^1.10.7"
 	},
 	"peerDependencies": {
 		"@tanstack/db": "^0.5.28",
@@ -52,15 +52,15 @@
 		"surrealdb": "^2.0.0"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.6",
+		"@biomejs/biome": "^2.4.7",
 		"@standard-schema/spec": "^1.1.0",
-		"@tanstack/db": "^0.5.31",
+		"@tanstack/db": "^0.5.33",
 		"@tanstack/query-core": "^5.90.20",
-		"@tanstack/query-db-collection": "^1.0.28",
-		"@tanstack/react-db": "^0.1.75",
+		"@tanstack/query-db-collection": "^1.0.30",
+		"@tanstack/react-db": "^0.1.77",
 		"@tanstack/react-query": "^5.90.21",
 		"@types/bun": "^1.3.10",
-		"surrealdb": "^2.0.1",
+		"surrealdb": "^2.0.2",
 		"tsup": "^8.5.1"
 	}
 }
