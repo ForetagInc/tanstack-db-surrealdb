@@ -12,6 +12,7 @@ export default defineConfig({
 		'surrealdb',
 		'loro-crdt',
 		'@tanstack/db',
+		'@tanstack/db-sqlite-persistence-core',
 		'@tanstack/query-core',
 		'@tanstack/query-db-collection',
 	],

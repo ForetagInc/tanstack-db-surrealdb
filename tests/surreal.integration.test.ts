@@ -447,7 +447,7 @@ if (!integrationEnv) {
 		expect(toRecordKeyString(nativeRows[0]?.id as RecordId)).toBe('q1');
 	});
 
-		it('query-driven eager keeps RecordId WHERE matches after dependency transition', async () => {
+	it('query-driven eager keeps RecordId WHERE matches after dependency transition', async () => {
 			const tableName = createTableName('it_query_where_recordid_eager');
 			createdTables.add(tableName);
 			await ensureTableSchema(db, tableName);
@@ -484,14 +484,12 @@ if (!integrationEnv) {
 				}),
 			);
 
-			// Step 1: mirror initial render where profile?.id is undefined.
 			const unfilteredQuery = createLiveQueryCollection((query) =>
 				query.from({ calendar: calendars }),
 			);
 			await unfilteredQuery.preload();
 			expect(unfilteredQuery.toArray.length).toBe(2);
 
-			// Step 2: mirror re-render with deps update and a fresh RecordId instance.
 			const profileId = new RecordId('account', 'query-user-a');
 			const liveQuery = createLiveQueryCollection((query) =>
 				query
@@ -503,6 +501,6 @@ if (!integrationEnv) {
 			const rows = liveQuery.toArray;
 			expect(rows.length).toBe(1);
 			expect(toRecordKeyString(rows[0]?.id as RecordId)).toBe('q1');
-		});
+	});
 	});
 }
