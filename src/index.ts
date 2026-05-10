@@ -14,31 +14,59 @@ import type {
 	UpdateMutationFnParams,
 	UtilsRecord,
 } from '@tanstack/db';
+import { persistedCollectionOptions } from '@tanstack/db-sqlite-persistence-core';
 import { queryCollectionOptions } from '@tanstack/query-db-collection';
 import { LoroDoc } from 'loro-crdt';
-import { Features, RecordId, Table } from 'surrealdb';
+import { Features, RecordId } from 'surrealdb';
 import { createLoroProfile } from './crdt';
 import {
-	asCanonicalRecordIdString,
 	normalizeRecordIdLikeFields,
 	normalizeRecordIdLikeValueDeep,
-	preferRecordIdLikeIdentity,
-	preferRecordIdLikeIdentityDeep,
 	toRecordId,
 	toRecordIdString,
 	toRecordKeyString,
 } from './id';
+import {
+	deriveCollectionId,
+	patchCollectionDeleteForRecordIds,
+} from './internal/collection-identity';
+import {
+	defaultAad,
+	stripEnvelopeFields,
+	toEnvelope,
+	toStoredEnvelope,
+} from './internal/envelope';
+import {
+	firstRow,
+	omitUndefined,
+	queryRows,
+	toRecordArray,
+} from './internal/records';
+import {
+	createInsertSchema,
+	isTempId,
+	type MutationInput,
+} from './internal/schema';
+import {
+	applyPreferredRecordIdIdentityToCollection,
+	primeRecordIdIdentityFromSubset,
+	subsetCacheKey,
+} from './internal/subset-identity';
+import { ActiveSubsetTracker } from './internal/subset-tracker';
+import {
+	tableNameOf,
+	toTableOptions,
+	toTableResource,
+} from './internal/table-options';
 import { manageTable } from './table';
 import type {
 	AADContext,
 	AdapterSyncMode,
-	EncryptedEnvelope,
 	LocalChange,
+	PersistedSurrealCollectionOptions,
 	SurrealCollectionOptions,
 	SurrealCollectionOptionsReturn,
 	SyncedTable,
-	TableLike,
-	TableOptions,
 } from './types';
 import { fromBase64, fromBytes, toBase64, toBytes } from './util';
 
@@ -47,70 +75,13 @@ export * from './encryption';
 export { toRecordKeyString } from './id';
 export * from './types';
 
-const TEMP_ID_PREFIX = '__temp__';
-const ENVELOPE_FIELDS = [
-	'version',
-	'algorithm',
-	'key_id',
-	'nonce',
-	'ciphertext',
-] as const;
 const NOOP = () => {};
 
 type Cleanup = () => void;
 
-type DeletePatchableCollection = {
-	state: Map<unknown, unknown>;
-	delete: (
-		keys: unknown[] | unknown,
-		config?: OperationConfig,
-	) => Transaction<Record<string, never>>;
-};
-
-type MutationInput<T extends { id: string | RecordId }> = Omit<T, 'id'> & {
-	id?: T['id'];
-};
-
 type QueryWriteUtils = {
 	writeUpsert?: (data: unknown) => void;
 	writeDelete?: (key: string) => void;
-};
-
-const patchedCollections = new WeakSet<object>();
-
-const normalizeDeleteKeyAgainstState = (
-	state: Map<unknown, unknown>,
-	key: unknown,
-): unknown => {
-	if (state.has(key)) return key;
-	const canonical = asCanonicalRecordIdString(key);
-	if (!canonical) return key;
-	return state.has(canonical) ? canonical : key;
-};
-
-const patchCollectionDeleteForRecordIds = (collection: unknown) => {
-	if (!collection || typeof collection !== 'object') return;
-	if (patchedCollections.has(collection)) return;
-	const candidate = collection as Partial<DeletePatchableCollection>;
-	if (typeof candidate.delete !== 'function') return;
-	const originalDelete = candidate.delete.bind(collection);
-	Object.defineProperty(collection, 'delete', {
-		configurable: true,
-		writable: true,
-		value: (
-			keys: unknown[] | unknown,
-			config?: OperationConfig,
-		): Transaction<Record<string, never>> => {
-			const state =
-				(collection as DeletePatchableCollection).state ??
-				new Map<unknown, unknown>();
-			const normalizedKeys = Array.isArray(keys)
-				? keys.map((key) => normalizeDeleteKeyAgainstState(state, key))
-				: normalizeDeleteKeyAgainstState(state, keys);
-			return originalDelete(normalizedKeys, config);
-		},
-	});
-	patchedCollections.add(collection);
 };
 
 type CRDTUpdateRow = {
@@ -137,330 +108,15 @@ type LiveSubscriptionLike = {
 	kill: () => Promise<void>;
 };
 
-const isTableObject = (value: unknown): value is TableOptions =>
-	typeof value === 'object' &&
-	value !== null &&
-	'name' in value &&
-	typeof (value as { name: unknown }).name === 'string';
-
-const toTableOptions = (table: TableLike): TableOptions => {
-	if (typeof table === 'string') return { name: table };
-	if (table instanceof Table) return { name: table.name };
-	if (isTableObject(table)) return table;
-	throw new Error('Expected table as string, Table, or { name }.');
-};
-
-const toTableResource = (table: TableLike): Table => {
-	const normalized = toTableOptions(table);
-	return new Table(normalized.name);
-};
-
-const tableNameOf = (table: TableLike): string => toTableOptions(table).name;
-
 const getWriteUtils = (utils: unknown): QueryWriteUtils =>
 	typeof utils === 'object' && utils !== null
 		? (utils as QueryWriteUtils)
 		: {};
 
-const firstRow = <T>(result: T | T[] | null | undefined): T | undefined => {
-	if (!result) return undefined;
-	if (Array.isArray(result)) return result[0];
-	return result;
-};
-
-const omitUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> =>
-	Object.fromEntries(
-		Object.entries(obj).filter(([, value]) => value !== undefined),
-	) as Partial<T>;
-
-const createTempRecordId = (tableName: string): RecordId => {
-	const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-	return new RecordId(tableName, `${TEMP_ID_PREFIX}${suffix}`);
-};
-
-const isTempId = (id: string | RecordId, tableName: string): boolean => {
-	const normalized = toRecordIdString(id);
-	const key = normalized.startsWith(`${tableName}:`)
-		? normalized.slice(tableName.length + 1)
-		: normalized;
-	return key.startsWith(TEMP_ID_PREFIX);
-};
-
-const toEnvelope = (
-	value: Record<string, unknown>,
-): EncryptedEnvelope | null => {
-	const version = value.version;
-	const algorithm = value.algorithm;
-	const keyId = value.key_id;
-	const nonce = value.nonce;
-	const ciphertext = value.ciphertext;
-	if (
-		typeof version !== 'number' ||
-		typeof algorithm !== 'string' ||
-		typeof keyId !== 'string' ||
-		typeof nonce !== 'string' ||
-		typeof ciphertext !== 'string'
-	) {
-		return null;
-	}
-	return {
-		v: version,
-		alg: algorithm,
-		kid: keyId,
-		n: nonce,
-		ct: ciphertext,
-	};
-};
-
-const toStoredEnvelope = (
-	envelope: EncryptedEnvelope,
-): Record<string, unknown> => ({
-	version: envelope.v,
-	algorithm: envelope.alg,
-	key_id: envelope.kid,
-	nonce: envelope.n,
-	ciphertext: envelope.ct,
-});
-
-const stripEnvelopeFields = (
-	value: Record<string, unknown>,
-): Record<string, unknown> => {
-	const copy = { ...value };
-	for (const key of ENVELOPE_FIELDS) delete copy[key];
-	return copy;
-};
-
-const toRecordArray = <T>(rows: T | T[] | null | undefined): T[] => {
-	if (!rows) return [];
-	return Array.isArray(rows) ? rows : [rows];
-};
-
-async function queryRows<T>(
-	db: {
-		query: (
-			sql: string,
-			bindings?: Record<string, unknown>,
-		) => Promise<unknown>;
-	},
-	sql: string,
-	bindings?: Record<string, unknown>,
-): Promise<T[]> {
-	const result = await db.query(sql, bindings ?? {});
-	if (Array.isArray(result)) {
-		const first = result[0];
-		if (Array.isArray(first)) return first as T[];
-		return [];
-	}
-	return [];
-}
-
-function createInsertSchema<T extends { id: string | RecordId }>(
-	tableName: string,
-): StandardSchemaV1<MutationInput<T>, T> {
-	return {
-		'~standard': {
-			version: 1,
-			vendor: 'tanstack-db-surrealdb',
-			validate: (value: unknown) => {
-				if (
-					!value ||
-					typeof value !== 'object' ||
-					Array.isArray(value)
-				) {
-					return {
-						issues: [{ message: 'Insert data must be an object.' }],
-					};
-				}
-
-				const data = normalizeRecordIdLikeFields({
-					...(value as Record<string, unknown>),
-				}) as MutationInput<T>;
-
-				if (!data.id)
-					data.id = createTempRecordId(tableName) as T['id'];
-
-				return { value: data as T };
-			},
-			types: undefined,
-		},
-	};
-}
-
-function defaultAad(ctx: AADContext): Uint8Array {
-	if (ctx.kind === 'base') return toBytes(`${ctx.table}:${ctx.id}`);
-	const base = ctx.baseTable ?? ctx.table;
-	return toBytes(`${ctx.table}:${base}:${ctx.id}`);
-}
-
 const syncModeFrom = (syncMode: AdapterSyncMode | undefined): AdapterSyncMode =>
 	syncMode ?? 'eager';
 
-const subsetCacheKey = (subset: LoadSubsetOptions): string => {
-	const seen = new WeakSet<object>();
-	return (
-		JSON.stringify(subset, (_key, value) => {
-			if (value instanceof Date) return value.toISOString();
-			if (value instanceof RecordId) return toRecordIdString(value);
-			if (typeof value === 'bigint') return value.toString();
-			if (typeof value === 'function')
-				return `[fn:${value.name || 'anonymous'}]`;
-
-			if (value && typeof value === 'object') {
-				const canonical = asCanonicalRecordIdString(value);
-				if (canonical) return canonical;
-
-				if (seen.has(value as object)) return '[Circular]';
-				seen.add(value as object);
-			}
-
-			return value;
-		}) ?? ''
-	);
-};
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-	typeof value === 'object' &&
-	value !== null &&
-	Object.getPrototypeOf(value) === Object.prototype;
-
-const normalizeSubsetValuesInPlace = (
-	value: unknown,
-	seen: WeakSet<object> = new WeakSet<object>(),
-	preferredByCanonical: Map<string, unknown> = new Map(),
-): Map<string, unknown> => {
-	if (Array.isArray(value)) {
-		for (const entry of value) {
-			normalizeSubsetValuesInPlace(entry, seen, preferredByCanonical);
-		}
-		return preferredByCanonical;
-	}
-
-	if (!value || typeof value !== 'object') return preferredByCanonical;
-	if (seen.has(value as object)) return preferredByCanonical;
-	seen.add(value as object);
-	const obj = value as Record<string, unknown>;
-
-	if (obj.type === 'val' && 'value' in obj) {
-		const canonical = asCanonicalRecordIdString(obj.value);
-		if (canonical) {
-			const preferred = preferRecordIdLikeIdentity(obj.value);
-			obj.value = preferred;
-			preferredByCanonical.set(canonical, preferred);
-		} else {
-			obj.value = preferRecordIdLikeIdentityDeep(obj.value);
-		}
-	}
-
-	for (const child of Object.values(obj)) {
-		normalizeSubsetValuesInPlace(child, seen, preferredByCanonical);
-	}
-
-	return preferredByCanonical;
-};
-
-const primeRecordIdIdentityFromSubset = (
-	subset?: LoadSubsetOptions,
-): Map<string, unknown> => {
-	if (!subset) return new Map();
-	return normalizeSubsetValuesInPlace(subset);
-};
-
-const rebindRecordIdIdentityDeep = (
-	value: unknown,
-	preferredByCanonical: Map<string, unknown>,
-): { value: unknown; changed: boolean } => {
-	const canonical = asCanonicalRecordIdString(value);
-	if (canonical && preferredByCanonical.has(canonical)) {
-		const preferred = preferredByCanonical.get(canonical);
-		return {
-			value: preferred,
-			changed: value !== preferred,
-		};
-	}
-
-	if (Array.isArray(value)) {
-		let changed = false;
-		const out = value.map((entry) => {
-			const rebound = rebindRecordIdIdentityDeep(
-				entry,
-				preferredByCanonical,
-			);
-			changed = changed || rebound.changed;
-			return rebound.value;
-		});
-		return changed
-			? { value: out, changed: true }
-			: { value, changed: false };
-	}
-
-	if (!isPlainObject(value)) return { value, changed: false };
-
-	let changed = false;
-	const out: Record<string, unknown> = {};
-	for (const [key, entry] of Object.entries(value)) {
-		const rebound = rebindRecordIdIdentityDeep(entry, preferredByCanonical);
-		if (rebound.changed) changed = true;
-		out[key] = rebound.value;
-	}
-	return changed ? { value: out, changed: true } : { value, changed: false };
-};
-
-const applyPreferredRecordIdIdentityToCollection = <
-	T extends { id: string | RecordId },
->(
-	ctx: Parameters<SyncConfig<T>['sync']>[0],
-	preferredByCanonical: Map<string, unknown>,
-): void => {
-	if (!preferredByCanonical.size) return;
-	const collection = ctx.collection as {
-		entries?: () => Iterable<[string | number, T]>;
-	};
-	if (!collection || typeof collection.entries !== 'function') return;
-
-	const rebound: T[] = [];
-	for (const [, row] of collection.entries()) {
-		const updated = rebindRecordIdIdentityDeep(row, preferredByCanonical);
-		if (!updated.changed) continue;
-		rebound.push(updated.value as T);
-	}
-	if (!rebound.length) return;
-
-	ctx.begin();
-	try {
-		for (const row of rebound) {
-			// Force index recalculation for RecordId identity rebinding.
-			// A plain update can be treated as deep-equal for RecordId objects
-			// (no enumerable fields), which skips index updates in TanStack DB.
-			ctx.write({
-				type: 'delete',
-				value: { id: row.id } as unknown as T,
-			});
-			ctx.write({ type: 'insert', value: row });
-		}
-	} finally {
-		ctx.commit();
-	}
-	const collectionWithInternals = collection as {
-		_indexes?: {
-			indexes?: Map<
-				number,
-				{ build?: (entries: Iterable<[string | number, T]>) => void }
-			>;
-		};
-		_state?: {
-			entries?: () => Iterable<[string | number, T]>;
-		};
-	};
-	const entries = collectionWithInternals._state?.entries?.();
-	const indexes = collectionWithInternals._indexes?.indexes;
-	if (entries && indexes) {
-		for (const index of indexes.values()) {
-			index.build?.(entries);
-		}
-	}
-};
-
-type BaseSyncRuntime<T extends { id: string | RecordId }> = {
+type BaseSyncRuntime = {
 	startRealtime: () => Promise<void>;
 	cleanup: () => void;
 	loadSubset: (subset: LoadSubsetOptions) => Promise<void>;
@@ -489,15 +145,14 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	const isOnDemandLike =
 		syncMode === 'on-demand' || syncMode === 'progressive';
 	const isStrictOnDemand = syncMode === 'on-demand';
-	// Keep query-driven predicates on subset transport so where(...) paths
-	// can be normalized and pushed down reliably.
+	// Subset transport keeps TanStack predicates aligned with SurrealQL pushdown.
 	const queryDrivenSyncMode: 'eager' | 'on-demand' = 'on-demand';
 	const queryDrivenUsesSubsets = queryDrivenSyncMode === 'on-demand';
 	const tableOptions = toTableOptions(table);
 	const tableName = tableOptions.name;
+	const collectionId = config.id ?? deriveCollectionId(tableName, queryKey);
 	const tableResource = toTableResource(table);
-	const subsetIds = new Map<string, Set<string>>();
-	const activeOnDemandIds = new Set<string>();
+	const activeSubsets = new ActiveSubsetTracker();
 
 	const e2eeEnabled = e2ee?.enabled === true;
 	const crdtEnabled = crdt?.enabled === true;
@@ -574,10 +229,6 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	const snapshotsTableName =
 		crdtEnabled && crdt.snapshotsTable
 			? tableNameOf(crdt.snapshotsTable)
-			: undefined;
-	const snapshotsTable =
-		crdtEnabled && crdt.snapshotsTable
-			? toTableResource(crdt.snapshotsTable)
 			: undefined;
 
 	const getDoc = (id: string): LoroDoc => {
@@ -785,16 +436,9 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		}
 	};
 
-	const updateActiveOnDemandIds = () => {
-		activeOnDemandIds.clear();
-		for (const ids of subsetIds.values()) {
-			for (const id of ids) activeOnDemandIds.add(id);
-		}
-	};
-
 	const createSyncRuntime = (
 		ctx: Parameters<SyncConfig<T>['sync']>[0],
-	): BaseSyncRuntime<T> => {
+	): BaseSyncRuntime => {
 		let cleanupBaseLive: Cleanup = NOOP;
 		let cleanupUpdateLive: Cleanup = NOOP;
 		let killed = false;
@@ -814,7 +458,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 				const row = message.value as Record<string, unknown>;
 				const id = toRecordKeyString(row.id as string | RecordId);
 
-				const wasVisible = activeOnDemandIds.has(id);
+				const wasVisible = activeSubsets.has(id);
 				if (
 					isStrictOnDemand &&
 					!wasVisible &&
@@ -823,8 +467,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 					return;
 
 				if (message.action === 'DELETE') {
-					for (const ids of subsetIds.values()) ids.delete(id);
-					updateActiveOnDemandIds();
+					activeSubsets.deleteId(id);
 					if (isStrictOnDemand && !wasVisible) return;
 					ctx.begin();
 					try {
@@ -877,7 +520,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 
 				if (value.actor && value.actor === resolveActor(id)) return;
 
-				if (isStrictOnDemand && !activeOnDemandIds.has(id)) return;
+				if (isStrictOnDemand && !activeSubsets.has(id)) return;
 
 				const doc = getDoc(id);
 				const bytes = await decodeUpdateBytes(value, 'update');
@@ -901,9 +544,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 		const loadSubset = async (subset: LoadSubsetOptions) => {
 			if (!queryDrivenUsesSubsets) return;
 			const preferredFromSubset = primeRecordIdIdentityFromSubset(subset);
-			// In eager paths, local where(eq(...)) filtering runs before async subset
-			// fetches resolve. Rebind matching RecordIds synchronously so predicates
-			// compare against stable identities, not object references from earlier loads.
+			// Rebind before async rows arrive so RecordId predicates keep stable identity.
 			applyPreferredRecordIdIdentityToCollection(
 				ctx,
 				preferredFromSubset,
@@ -915,8 +556,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 					toRecordKeyString(row.id as string | RecordId),
 				),
 			);
-			subsetIds.set(key, ids);
-			updateActiveOnDemandIds();
+			activeSubsets.set(key, ids);
 
 			if (!crdtEnabled) {
 				await hydratePlainRows(
@@ -946,9 +586,8 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			if (!queryDrivenUsesSubsets) return;
 			primeRecordIdIdentityFromSubset(subset);
 			const key = subsetCacheKey(subset);
-			subsetIds.delete(key);
-			updateActiveOnDemandIds();
-			if (subsetIds.size === 0) {
+			activeSubsets.delete(key);
+			if (activeSubsets.size === 0) {
 				cleanupBaseLive();
 				cleanupUpdateLive();
 			}
@@ -964,8 +603,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 
 		const cleanup = () => {
 			killed = true;
-			subsetIds.clear();
-			updateActiveOnDemandIds();
+			activeSubsets.clear();
 			cleanupBaseLive();
 			cleanupUpdateLive();
 		};
@@ -979,6 +617,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 	};
 
 	const base = queryCollectionOptions({
+		id: collectionId,
 		schema: createInsertSchema<T>(tableName),
 		getKey,
 		queryKey,
@@ -1198,7 +837,7 @@ function modernSurrealCollectionOptions<T extends SyncedTable<object>>(
 			}
 			return { refetch: false } as unknown as StandardSchema<T>;
 		}) as DeleteMutationFn<T, string, UtilsRecord, StandardSchema<T>>,
-	} as never) as SurrealCollectionOptionsReturn<T>;
+	} as never) as unknown as SurrealCollectionOptionsReturn<T>;
 
 	const baseSync = base.sync?.sync;
 	const sync = baseSync
@@ -1329,6 +968,23 @@ export function surrealCollectionOptions<T extends SyncedTable<object>>(
 	utils: UtilsRecord;
 } {
 	return modernSurrealCollectionOptions(config);
+}
+
+export function persistedSurrealCollectionOptions<
+	T extends SyncedTable<object>,
+>(config: PersistedSurrealCollectionOptions<T>) {
+	const { persistence, schemaVersion, ...surrealConfig } = config;
+
+	return persistedCollectionOptions<
+		T,
+		string,
+		StandardSchemaV1<Omit<T, 'id'> & { id?: T['id'] }, T>,
+		UtilsRecord
+	>({
+		persistence,
+		schemaVersion,
+		...modernSurrealCollectionOptions(surrealConfig),
+	});
 }
 
 declare module '@tanstack/db' {

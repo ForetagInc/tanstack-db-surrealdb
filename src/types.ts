@@ -4,6 +4,7 @@ import type {
 	LoadSubsetOptions,
 	UtilsRecord,
 } from '@tanstack/db';
+import type { PersistedCollectionPersistence } from '@tanstack/db-sqlite-persistence-core';
 import type { QueryClient } from '@tanstack/query-core';
 import type { LoroDoc } from 'loro-crdt';
 import type { RecordId, Surreal, Table } from 'surrealdb';
@@ -82,6 +83,12 @@ export type SurrealCollectionOptions<T extends object> = Omit<
 	CollectionConfig<T>,
 	'onInsert' | 'onUpdate' | 'onDelete' | 'sync' | 'getKey' | 'syncMode'
 > & {
+	/**
+	 * Optional stable collection identity.
+	 * When omitted, the adapter derives one from the Surreal table name and queryKey
+	 * so wrappers like TanStack DB persistence can reuse the same collection across restarts.
+	 */
+	id?: string;
 	db: Surreal;
 	table: TableLike;
 	queryKey: readonly unknown[];
@@ -92,13 +99,21 @@ export type SurrealCollectionOptions<T extends object> = Omit<
 	onError?: (error: unknown) => void;
 };
 
-export type SurrealCollectionOptionsReturn<T extends { id: string | RecordId }> =
-	CollectionConfig<
-		T,
-		string,
-		StandardSchemaV1<Omit<T, 'id'> & { id?: T['id'] }, T>,
-		UtilsRecord
-	> & {
-		schema: StandardSchemaV1<Omit<T, 'id'> & { id?: T['id'] }, T>;
-		utils: UtilsRecord;
+export type PersistedSurrealCollectionOptions<T extends object> =
+	SurrealCollectionOptions<T> & {
+		persistence: PersistedCollectionPersistence;
+		schemaVersion?: number;
 	};
+
+export type SurrealCollectionOptionsReturn<
+	T extends { id: string | RecordId },
+> = CollectionConfig<
+	T,
+	string,
+	StandardSchemaV1<Omit<T, 'id'> & { id?: T['id'] }, T>,
+	UtilsRecord
+> & {
+	id: string;
+	schema: StandardSchemaV1<Omit<T, 'id'> & { id?: T['id'] }, T>;
+	utils: UtilsRecord;
+};

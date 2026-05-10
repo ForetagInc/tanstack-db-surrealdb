@@ -8,10 +8,6 @@ TanStack DB collection adapter for SurrealDB JS with:
 - Optional Loro CRDT replication (`json`, `richtext`)
 - Query-driven sync modes (`eager`, `on-demand`, `progressive`)
 
-### Roadmap
-
-- Persistence: [Issue](https://github.com/TanStack/db/issues/865)
-
 ## Install
 
 ```sh
@@ -34,44 +30,137 @@ const queryClient = new QueryClient();
 type Product = { id: string; name: string; price: number };
 
 export const products = createCollection(
-  surrealCollectionOptions<Product>({
-    db,
-    table: { name: 'product' },
-    queryClient,
-    queryKey: ['product'],
-    syncMode: 'eager',
-  }),
+	surrealCollectionOptions<Product>({
+		db,
+		table: { name: 'product' },
+		queryClient,
+		queryKey: ['product'],
+		syncMode: 'eager',
+	}),
 );
 ```
+
+## Persistence
+
+TanStack DB persistence can wrap this adapter directly. The adapter now returns a
+stable collection `id` by default using:
+
+```ts
+surreal:${tableName}:${hashKey(queryKey)}
+```
+
+That makes it safe to compose with `persistedCollectionOptions(...)` across
+restarts. If you need a custom persistence boundary, pass `id` explicitly and it
+will be preserved.
+
+If you want less boilerplate, use `persistedSurrealCollectionOptions(...)` from
+this package and pass the runtime-specific `persistence` adapter plus
+`schemaVersion` directly.
+
+Create the SQLite database and persistence adapter once per app/runtime, export
+that shared `persistence`, and reuse it across every persisted collection in
+the app.
+
+```ts
+// Create once, reuse everywhere
+const sqlite = await openBrowserWASQLiteOPFSDatabase({
+	databaseName: 'tanstack-db.sqlite',
+});
+
+export const persistence = createBrowserWASQLitePersistence({
+	database: sqlite,
+});
+```
+
+Browser-first example:
+
+```ts
+// persistence.ts
+import { createCollection } from '@tanstack/db';
+import { QueryClient } from '@tanstack/query-core';
+import {
+  createBrowserWASQLitePersistence,
+  openBrowserWASQLiteOPFSDatabase,
+} from '@tanstack/browser-db-sqlite-persistence';
+import { Surreal } from 'surrealdb';
+import { persistedSurrealCollectionOptions } from '@foretag/tanstack-db-surrealdb';
+
+const db = new Surreal();
+const queryClient = new QueryClient();
+
+const sqlite = await openBrowserWASQLiteOPFSDatabase({
+  databaseName: 'tanstack-db.sqlite',
+});
+
+export const persistence = createBrowserWASQLitePersistence({
+  database: sqlite,
+});
+
+type Product = { id: string; name: string; price: number };
+type Category = { id: string; name: string };
+
+export const products = createCollection(
+	persistedSurrealCollectionOptions<Product>({
+		persistence,
+		schemaVersion: 1,
+		db,
+		table: { name: 'product' },
+		queryClient,
+		queryKey: ['product'],
+		syncMode: 'eager',
+	}),
+);
+
+export const categories = createCollection(
+	persistedSurrealCollectionOptions<Category>({
+		persistence,
+		schemaVersion: 1,
+		db,
+		table: { name: 'category' },
+		queryClient,
+		queryKey: ['category'],
+		syncMode: 'eager',
+	}),
+);
+```
+
+You only need one `openBrowserWASQLiteOPFSDatabase(...)` call and one
+`createBrowserWASQLitePersistence(...)` call per browser app, not per
+collection
 
 ## Adapter API
 
 ```ts
 type SurrealCollectionOptions<T> = {
-  db: Surreal;
-  table: Table | { name: string; relation?: boolean } | string;
-  queryClient: QueryClient;
-  queryKey: readonly unknown[];
-  syncMode?: 'eager' | 'on-demand' | 'progressive';
-  e2ee?: {
-    enabled: boolean;
-    crypto: CryptoProvider;
-    aad?: (ctx: { table: string; id: string; kind: 'base'|'update'|'snapshot'; baseTable?: string }) => Uint8Array;
-  };
-  crdt?: {
-    enabled: boolean;
-    profile: 'json' | 'richtext';
-    updatesTable: Table | { name: string } | string;
-    snapshotsTable?: Table | { name: string } | string;
-    // Optional overrides. If omitted, adapter uses built-in handlers for `profile`.
-    materialize?: (doc: LoroDoc, id: string) => T;
-    applyLocalChange?: (doc: LoroDoc, change: { type: 'insert'|'update'|'delete'; value: T }) => void;
-    persistMaterializedView?: boolean;
-    actor?: string | ((ctx: { id: string; change?: { type: 'insert'|'update'|'delete'; value: T } }) => string | undefined);
-    localActorId?: string; // deprecated
-  };
+	id?: string;
+	db: Surreal;
+	table: Table | { name: string; relation?: boolean } | string;
+	queryClient: QueryClient;
+	queryKey: readonly unknown[];
+	syncMode?: 'eager' | 'on-demand' | 'progressive';
+	e2ee?: {
+		enabled: boolean;
+		crypto: CryptoProvider;
+		aad?: (ctx: { table: string; id: string; kind: 'base'|'update'|'snapshot'; baseTable?: string }) => Uint8Array;
+	};
+	crdt?: {
+		enabled: boolean;
+		profile: 'json' | 'richtext';
+		updatesTable: Table | { name: string } | string;
+		snapshotsTable?: Table | { name: string } | string;
+		// Optional overrides. If omitted, adapter uses built-in handlers for `profile`.
+		materialize?: (doc: LoroDoc, id: string) => T;
+		applyLocalChange?: (doc: LoroDoc, change: { type: 'insert'|'update'|'delete'; value: T }) => void;
+		persistMaterializedView?: boolean;
+		actor?: string | ((ctx: { id: string; change?: { type: 'insert'|'update'|'delete'; value: T } }) => string | undefined);
+		localActorId?: string; // deprecated
+	};
 };
 ```
+
+`id` is optional. When omitted, the adapter derives a stable collection id from
+the Surreal table name and `queryKey` so TanStack DB persistence wrappers can
+reuse the same persisted collection state across restarts.
 
 ## E2EE
 
@@ -242,14 +331,14 @@ If you run snapshot compaction from a trusted backend/service account, grant cre
 const provider = await WebCryptoAESGCM.fromRawKey(rawKey, { kid: 'org-key-2026-01' });
 
 const secrets = createCollection(
-  surrealCollectionOptions<{ id: string; title: string; body: string }>({
-    db,
-    table: { name: 'secret_note' },
-    queryClient,
-    queryKey: ['secret-note'],
-    syncMode: 'eager',
-    e2ee: { enabled: true, crypto: provider },
-  }),
+	surrealCollectionOptions<{ id: string; title: string; body: string }>({
+		db,
+		table: { name: 'secret_note' },
+		queryClient,
+		queryKey: ['secret-note'],
+		syncMode: 'eager',
+		e2ee: { enabled: true, crypto: provider },
+	}),
 );
 ```
 
@@ -257,20 +346,20 @@ const secrets = createCollection(
 
 ```ts
 const docs = createCollection(
-  surrealCollectionOptions<{ id: string; content: string; title?: string }>({
-    db,
-    table: { name: 'doc' },
-    queryClient,
-    queryKey: ['doc'],
-    syncMode: 'on-demand',
-    crdt: {
-      enabled: true,
-      profile: 'richtext',
-      updatesTable: { name: 'crdt_update' },
-      snapshotsTable: { name: 'crdt_snapshot' },
-      actor: ({ id }) => id.startsWith('team-a') ? 'device:team-a:abc' : 'device:team-b:abc',
-    },
-  }),
+	surrealCollectionOptions<{ id: string; content: string; title?: string }>({
+		db,
+		table: { name: 'doc' },
+		queryClient,
+		queryKey: ['doc'],
+		syncMode: 'on-demand',
+		crdt: {
+			enabled: true,
+			profile: 'richtext',
+			updatesTable: { name: 'crdt_update' },
+			snapshotsTable: { name: 'crdt_snapshot' },
+			actor: ({ id }) => id.startsWith('team-a') ? 'device:team-a:abc' : 'device:team-b:abc',
+		},
+	}),
 );
 ```
 
@@ -280,18 +369,18 @@ const docs = createCollection(
 import { RecordId } from 'surrealdb';
 
 type CalendarEvent = {
-  id: RecordId<'calendar_event'>;
-  owner: RecordId<'account'>;
-  title: string;
-  start_at: string;
+	id: RecordId<'calendar_event'>;
+	owner: RecordId<'account'>;
+	title: string;
+	start_at: string;
 };
 
 await calendarEvents.insert({
-  // id is Optional on insert
-  id: new RecordId('calendar_event', 'evt-001'),
-  owner: new RecordId('account', 'user-123'),
-  title: 'Planning',
-  start_at: '2026-02-23T10:00:00.000Z',
+	// id is Optional on insert
+	id: new RecordId('calendar_event', 'evt-001'),
+	owner: new RecordId('account', 'user-123'),
+	title: 'Planning',
+	start_at: '2026-02-23T10:00:00.000Z',
 });
 ```
 
@@ -303,20 +392,20 @@ Full runnable example: `examples/record-id.ts`.
 import { createLiveQueryCollection, eq } from '@tanstack/db';
 
 const files = createCollection(
-  surrealCollectionOptions<{ id: string; owner: string; updated_at: string; name: string }>({
-    db,
-    table: { name: 'file' },
-    queryClient,
-    queryKey: ['file'],
-    syncMode: 'on-demand',
-  }),
+	surrealCollectionOptions<{ id: string; owner: string; updated_at: string; name: string }>({
+		db,
+		table: { name: 'file' },
+		queryClient,
+		queryKey: ['file'],
+		syncMode: 'on-demand',
+	}),
 );
 
 const ownerFiles = createLiveQueryCollection((q) =>
-  q
-    .from({ files })
-    .where(({ files }) => eq(files.owner, 'account:abc'))
-    .select(({ files }) => files),
+	q
+		.from({ files })
+		.where(({ files }) => eq(files.owner, 'account:abc'))
+		.select(({ files }) => files),
 );
 
 await ownerFiles.preload();

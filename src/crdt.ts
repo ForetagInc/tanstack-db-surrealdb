@@ -1,6 +1,6 @@
 import type { LoroDoc } from 'loro-crdt';
-import type { LocalChange } from './types';
 import type { CRDTProfileAdapter } from './crdt/types';
+import type { LocalChange } from './types';
 
 export type LoroProfile = 'json' | 'richtext';
 
@@ -75,14 +75,16 @@ export const createLoroProfile = <T extends object = Record<string, unknown>>(
 ): CRDTProfileAdapter<T> => {
 	if (profile === 'richtext') {
 		return {
-			materialize: materializeLoroRichtext as CRDTProfileAdapter<T>['materialize'],
+			materialize:
+				materializeLoroRichtext as CRDTProfileAdapter<T>['materialize'],
 			applyLocalChange:
 				applyLoroRichtextChange as CRDTProfileAdapter<T>['applyLocalChange'],
 		};
 	}
 
 	return {
-		materialize: materializeLoroJson as CRDTProfileAdapter<T>['materialize'],
+		materialize:
+			materializeLoroJson as CRDTProfileAdapter<T>['materialize'],
 		applyLocalChange:
 			applyLoroJsonChange as CRDTProfileAdapter<T>['applyLocalChange'],
 	};

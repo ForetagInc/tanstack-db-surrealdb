@@ -12,20 +12,14 @@ import {
 	toNativeRecordIdLikeValue,
 	toRecordId,
 } from './id';
+import { firstRow } from './internal/records';
 import type { SurrealSubset, TableOptions } from './types';
 
 type QueryResult<T> = T[] | null;
-type RowResult<T> = T | T[] | null;
 type FieldPath = Array<string | number>;
 type SqlFragment = { sql: string };
 
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-const firstRow = <T>(res: RowResult<T>): T | undefined => {
-	if (!res) return undefined;
-	if (Array.isArray(res)) return res[0];
-	return res;
-};
 
 const toFieldPath = (value: unknown): FieldPath => {
 	if (!Array.isArray(value)) {
@@ -257,13 +251,13 @@ export function manageTable<T extends { id: string | RecordId }>(
 		const id = (data as Partial<T> & { id?: string | RecordId }).id;
 		if (!id) {
 			const created = await db.create(table).content(data);
-			return firstRow(created as RowResult<T>);
+			return firstRow(created as T | T[] | null);
 		}
 
 		const payload = { ...(data as Record<string, unknown>) };
 		payload.id = toRecordId(name, id);
 		const inserted = await db.insert(table, payload);
-		return firstRow(inserted as RowResult<T>);
+		return firstRow(inserted as T | T[] | null);
 	};
 
 	const update = async (id: RecordId, data: T | Partial<T>) => {

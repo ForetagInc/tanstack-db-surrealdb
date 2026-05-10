@@ -1,5 +1,5 @@
-import { fromBase64, toBase64 } from '../util';
 import type { Bytes, EncryptedEnvelope } from '../types';
+import { fromBase64, toBase64 } from '../util';
 import type { CryptoProvider, DecryptInput, EncryptInput } from './provider';
 
 export * from './provider';
@@ -39,7 +39,9 @@ export class WebCryptoAESGCM implements CryptoProvider {
 			options.resolveKey ??
 			((incomingKid) => {
 				if (incomingKid !== this.kid) {
-					throw new Error(`No key configured for kid '${incomingKid}'.`);
+					throw new Error(
+						`No key configured for kid '${incomingKid}'.`,
+					);
 				}
 				return key;
 			});
