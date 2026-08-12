@@ -14,7 +14,11 @@ import {
 } from '../src/id';
 
 const cjsSurreal = require('surrealdb') as {
-	RecordId: new (table: string, id: string) => unknown;
+	RecordId: new (table: string, id: string) => {
+		table: unknown;
+		id: unknown;
+		toString: () => string;
+	};
 };
 const CjsRecordId = cjsSurreal.RecordId;
 
@@ -52,7 +56,18 @@ describe('id helpers', () => {
 	});
 
 	it('normalizes cross-runtime Surreal RecordId instances (CJS/ESM)', () => {
-		const cjsRid = new CjsRecordId('account', 'cross-runtime');
+		const importedRid = new CjsRecordId('account', 'cross-runtime');
+		// Bun may resolve require('surrealdb') and import 'surrealdb' to the
+		// same constructor. Use a structural copy in that case so this test
+		// still exercises the cross-runtime normalization path.
+		const cjsRid =
+			importedRid instanceof RecordId
+				? {
+						table: importedRid.table,
+						id: importedRid.id,
+						toString: importedRid.toString.bind(importedRid),
+					}
+				: importedRid;
 		expect(cjsRid instanceof RecordId).toBe(false);
 
 		const normalized = normalizeRecordIdLikeValue(cjsRid);

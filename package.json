@@ -39,7 +39,7 @@
 	"scripts": {
 		"build": "tsup src/index.ts",
 		"test": "bun test",
-		"test:integration": "bun test tests/surreal.integration.test.ts"
+		"test:integration": "SURREAL_RUN_INTEGRATION=true bun test tests/surreal.integration.test.ts"
 	},
 	"dependencies": {
 		"@tanstack/db-sqlite-persistence-core": "^0.2.9",

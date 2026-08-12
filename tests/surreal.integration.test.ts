@@ -56,7 +56,10 @@ const loadIntegrationEnv = (): IntegrationEnv | null => {
 	};
 };
 
-const integrationEnv = loadIntegrationEnv();
+const integrationEnv =
+	process.env.SURREAL_RUN_INTEGRATION === 'true'
+		? loadIntegrationEnv()
+		: null;
 
 const sleep = (ms: number) =>
 	new Promise<void>((resolve) => {
